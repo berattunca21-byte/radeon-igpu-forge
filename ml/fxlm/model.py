@@ -1,11 +1,11 @@
-"""fxlm.model: GPTConfig + GPT — pre-norm transformer (fp16 dostu).
+"""fxlm.model: GPTConfig + GPT — pre-norm transformer (fp16 friendly).
 
-Blok: RMSNorm -> qkv Linear(D->3D, bias yok) -> flash_attention_qkv
-( (B,T,3,H,Dh) gorunumu, permute yok ) -> proj Linear -> residual;
+Block: RMSNorm -> qkv Linear(D->3D, no bias) -> flash_attention_qkv
+( (B,T,3,H,Dh) view, no permute ) -> proj Linear -> residual;
 RMSNorm -> fc(D->4D) -> GELU(tanh) -> fc2 -> residual.
-Final RMSNorm; LM head = tied embedding (ya da ayri Linear).
+Final RMSNorm; LM head = tied embedding (or a separate Linear).
 attn_impl: "flash"|"sdpa" ; norm_impl: "fused"|"torch" ; ce_impl:
-"fused"|"torch" — ablation/parity icin duz PyTorch yollari.
+"fused"|"torch" — plain PyTorch paths for ablation/parity.
 """
 import math
 from dataclasses import dataclass
@@ -76,7 +76,7 @@ class GPT(nn.Module):
     def __init__(self, cfg: GPTConfig):
         super().__init__()
         if cfg.d_model % cfg.n_head:
-            raise ValueError("d_model, n_head'in kati olmali")
+            raise ValueError("d_model must be a multiple of n_head")
         self.cfg = cfg
         D = cfg.d_model
         self.tok_emb = nn.Embedding(cfg.vocab_size, D)
@@ -86,7 +86,7 @@ class GPT(nn.Module):
         if not cfg.tie_embeddings:
             self.head = nn.Linear(D, cfg.vocab_size, bias=False)
         self.apply(self._init)
-        # proj/fc2 kucuk init (residual derinligi olcegi)
+        # small init for proj/fc2 (scaled by residual depth)
         s = 0.02 / math.sqrt(2 * cfg.n_layer)
         for b in self.blocks:
             nn.init.normal_(b.proj.weight, std=s)

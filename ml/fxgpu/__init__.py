@@ -1,8 +1,8 @@
-"""fxgpu: gfx1035 (Radeon 680M) icin fused-HIP-kernel ML yardimcilari.
+"""fxgpu: fused-HIP-kernel ML helpers for gfx1035 (Radeon 680M).
 
-Tembel export'lar: torch'a bagli moduller (fused_linear, model) ilk
-erisimde yuklenir — boylece `from fxgpu.env import setup_env` torch'u
-import etmeden ortam degiskenlerini kurabilir.
+Lazy exports: modules that depend on torch (fused_linear, model) are loaded on
+first access — so `from fxgpu.env import setup_env` can set up the
+environment variables without importing torch.
 """
 
 __all__ = [

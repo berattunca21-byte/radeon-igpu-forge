@@ -1,8 +1,8 @@
-"""fxgpu self-test: FusedGatherLinear parity vs unfold+Fn.linear referansi.
+"""fxgpu self-test: FusedGatherLinear parity vs the unfold+Fn.linear reference.
 
-Calistirma (KB kokunden):
+Run (from the repo root):
     GPU_PYTHON.cmd ml\\fxgpu\\selftest.py
-veya ml\\fxgpu altinda sampiyon env ile:  python selftest.py
+or inside ml\\fxgpu with the champion env:  python selftest.py
 """
 import os
 import sys
@@ -10,7 +10,7 @@ import time
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from fxgpu.env import setup_env  # noqa: E402  (torch'tan once)
+from fxgpu.env import setup_env  # noqa: E402  (before torch)
 setup_env()
 
 import torch  # noqa: E402
@@ -32,7 +32,7 @@ def main():
     idx32 = torch.randint(0, R - W + 1, (B,), device=device,
                           dtype=torch.int32)
 
-    # referans: unfold gorunumu + Fn.linear (window-major duz)
+    # reference: unfold view + Fn.linear (flattened window-major)
     Xu = X16.unfold(0, W, 1)                          # (R-W+1, F, W)
     xb = Xu[idx32.long()].transpose(1, 2).reshape(B, K)
     w_ref = weight.detach().clone().requires_grad_()
@@ -44,18 +44,18 @@ def main():
     out_f = fused_gather_linear(X16, idx32, w_f, b_f)
 
     fwd_err = (out_f.double() - out_ref.double()).abs().max().item()
-    print(f"fwd max abs err = {fwd_err:.6f}  (esik 0.05)")
-    assert fwd_err < 0.05, "forward parity bozuk"
+    print(f"fwd max abs err = {fwd_err:.6f}  (threshold 0.05)")
+    assert fwd_err < 0.05, "forward parity broken"
 
     g = torch.randn(B, HID, device=device, dtype=torch.float16)
     out_ref.backward(g)
     out_f.backward(g)
     dW_err = (w_f.grad.double() - w_ref.grad.double()).abs().max().item()
     db_err = (b_f.grad.double() - b_ref.grad.double()).abs().max().item()
-    print(f"dW err = {dW_err:.6f} | db err = {db_err:.6f}  (esik 1e-3)")
-    assert dW_err < 1e-3 and db_err < 1e-3, "grad parity bozuk"
+    print(f"dW err = {dW_err:.6f} | db err = {db_err:.6f}  (threshold 1e-3)")
+    assert dW_err < 1e-3 and db_err < 1e-3, "grad parity broken"
 
-    # F % 8 != 0 hatasi tetiklenmeli
+    # an F % 8 != 0 error must be triggered
     try:
         bad = torch.randn(1000, 37, device=device, dtype=torch.float16)
         w37 = torch.randn(HID, 37 * W, device=device,
@@ -63,10 +63,10 @@ def main():
         FusedGatherLinear.apply(bad, idx32[:8].clamp(max=1000 - W),
                                 w37, bias)
     except ValueError as e:
-        assert "8'in katina" in str(e)
-        print(f"F=37 reddi OK: {e}")
+        assert "multiple of 8" in str(e)
+        print(f"F=37 rejected OK: {e}")
     else:
-        raise AssertionError("F=37 icin ValueError firlatilmadi")
+        raise AssertionError("no ValueError was raised for F=37")
 
     # forward_dense parity (WindowMLP)
     from fxgpu import WindowMLP
@@ -79,7 +79,7 @@ def main():
         print(f"WindowMLP master={master}: fused vs dense err = {d:.6f}")
         assert d < 0.05
 
-    # inference_mode: null-Xg yolu — fused vs forward_dense parity + hiz
+    # inference_mode: null-Xg path — fused vs forward_dense parity + speed
     torch.manual_seed(2)
     m = WindowMLP(F, W, master=True).to(device).eval()
     big = torch.randint(0, R - W + 1, (32768,), device=device,
@@ -95,15 +95,15 @@ def main():
         torch.cuda.synchronize()
         return (time.perf_counter() - t0) / iters * 1000
 
-    ms_grad = _time(lambda: m(X16, big))          # Xg write-out'lu yol
+    ms_grad = _time(lambda: m(X16, big))          # path with the Xg write-out
     with torch.inference_mode():
         o_inf = m(X16, big)
         xb_big = Xu[big.long()].transpose(1, 2).reshape(32768, K)
         o_dense = m.forward_dense(xb_big)
         d_inf = (o_inf.double() - o_dense.double()).abs().max().item()
-        ms_inf = _time(lambda: m(X16, big))       # Xg=NULL yolu
+        ms_inf = _time(lambda: m(X16, big))       # Xg=NULL path
     print(f"inference_mode fused vs dense err = {d_inf:.6f}")
-    assert d_inf < 0.05, "inference_mode (null-Xg) parity bozuk"
+    assert d_inf < 0.05, "inference_mode (null-Xg) parity broken"
     print(f"eval fwd B=32768: grad-on {ms_grad:.3f} ms | "
           f"inference_mode {ms_inf:.3f} ms")
 

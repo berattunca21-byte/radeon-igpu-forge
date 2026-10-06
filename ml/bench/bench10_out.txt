@@ -1,26 +1,26 @@
 
-=== T256: V=8192 D=512 L=8 H=8 T=256 B=16 (4096 tok/adim) ===
-  baseline           788.5 ms/adim |     5,195 tok/s |      - | peak  1853 MB | 33.7M param | isinma 11.0s | loss 9.143
-  fxlm               492.4 ms/adim |     8,318 tok/s |  1.60x | peak  1209 MB | 33.7M param | isinma 6.4s | loss 9.077
-  fxlm_sdpa          701.9 ms/adim |     5,835 tok/s |  1.12x | peak  1560 MB | 33.7M param | isinma 9.0s | loss 9.076
-  fxlm_torchnorm     420.2 ms/adim |     9,748 tok/s |  1.88x | peak  1209 MB | 33.7M param | isinma 6.2s | loss 9.075
-  fxlm_torchce       449.5 ms/adim |     9,112 tok/s |  1.75x | peak  1421 MB | 33.7M param | isinma 6.5s | loss 9.075
-  fxlm_tied          489.0 ms/adim |     8,375 tok/s |  1.61x | peak  1153 MB | 29.5M param | isinma 6.2s | loss 9.090
+=== T256: V=8192 D=512 L=8 H=8 T=256 B=16 (4096 tok/step) ===
+  baseline           788.5 ms/step |     5,195 tok/s |      - | peak  1853 MB | 33.7M param | warmup 11.0s | loss 9.143
+  fxlm               492.4 ms/step |     8,318 tok/s |  1.60x | peak  1209 MB | 33.7M param | warmup 6.4s | loss 9.077
+  fxlm_sdpa          701.9 ms/step |     5,835 tok/s |  1.12x | peak  1560 MB | 33.7M param | warmup 9.0s | loss 9.076
+  fxlm_torchnorm     420.2 ms/step |     9,748 tok/s |  1.88x | peak  1209 MB | 33.7M param | warmup 6.2s | loss 9.075
+  fxlm_torchce       449.5 ms/step |     9,112 tok/s |  1.75x | peak  1421 MB | 33.7M param | warmup 6.5s | loss 9.075
+  fxlm_tied          489.0 ms/step |     8,375 tok/s |  1.61x | peak  1153 MB | 29.5M param | warmup 6.2s | loss 9.090
 
-=== T512: V=8192 D=512 L=8 H=8 T=512 B=8 (4096 tok/adim) ===
-  baseline           981.1 ms/adim |     4,175 tok/s |      - | peak  2111 MB | 33.8M param | isinma 12.6s | loss 9.144
-  fxlm               530.1 ms/adim |     7,726 tok/s |  1.85x | peak  1213 MB | 33.8M param | isinma 6.5s | loss 9.072
-  fxlm_sdpa          892.3 ms/adim |     4,591 tok/s |  1.10x | peak  1820 MB | 33.8M param | isinma 10.6s | loss 9.073
-  fxlm_torchnorm     450.8 ms/adim |     9,086 tok/s |  2.18x | peak  1213 MB | 33.8M param | isinma 6.3s | loss 9.073
-  fxlm_torchce       557.9 ms/adim |     7,342 tok/s |  1.76x | peak  1425 MB | 33.8M param | isinma 6.7s | loss 9.072
-  fxlm_tied          447.3 ms/adim |     9,157 tok/s |  2.19x | peak  1157 MB | 29.6M param | isinma 6.5s | loss 9.093
+=== T512: V=8192 D=512 L=8 H=8 T=512 B=8 (4096 tok/step) ===
+  baseline           981.1 ms/step |     4,175 tok/s |      - | peak  2111 MB | 33.8M param | warmup 12.6s | loss 9.144
+  fxlm               530.1 ms/step |     7,726 tok/s |  1.85x | peak  1213 MB | 33.8M param | warmup 6.5s | loss 9.072
+  fxlm_sdpa          892.3 ms/step |     4,591 tok/s |  1.10x | peak  1820 MB | 33.8M param | warmup 10.6s | loss 9.073
+  fxlm_torchnorm     450.8 ms/step |     9,086 tok/s |  2.18x | peak  1213 MB | 33.8M param | warmup 6.3s | loss 9.073
+  fxlm_torchce       557.9 ms/step |     7,342 tok/s |  1.76x | peak  1425 MB | 33.8M param | warmup 6.7s | loss 9.072
+  fxlm_tied          447.3 ms/step |     9,157 tok/s |  2.19x | peak  1157 MB | 29.6M param | warmup 6.5s | loss 9.093
 
-=== T1024: V=8192 D=512 L=8 H=8 T=1024 B=4 (4096 tok/adim) ===
-  baseline          1406.3 ms/adim |     2,913 tok/s |      - | peak  2625 MB | 34.1M param | isinma 16.5s | loss 9.138
-  fxlm               513.7 ms/adim |     7,974 tok/s |  2.74x | peak  1215 MB | 34.1M param | isinma 7.0s | loss 9.077
-  fxlm_sdpa         1334.0 ms/adim |     3,071 tok/s |  1.05x | peak  2511 MB | 34.1M param | isinma 14.0s | loss 9.078
-  fxlm_torchnorm     513.8 ms/adim |     7,973 tok/s |  2.74x | peak  1215 MB | 34.1M param | isinma 6.9s | loss 9.078
-  fxlm_torchce       547.8 ms/adim |     7,477 tok/s |  2.57x | peak  1427 MB | 34.1M param | isinma 7.2s | loss 9.077
-  fxlm_tied          583.2 ms/adim |     7,023 tok/s |  2.41x | peak  1159 MB | 29.9M param | isinma 6.9s | loss 9.093
+=== T1024: V=8192 D=512 L=8 H=8 T=1024 B=4 (4096 tok/step) ===
+  baseline          1406.3 ms/step |     2,913 tok/s |      - | peak  2625 MB | 34.1M param | warmup 16.5s | loss 9.138
+  fxlm               513.7 ms/step |     7,974 tok/s |  2.74x | peak  1215 MB | 34.1M param | warmup 7.0s | loss 9.077
+  fxlm_sdpa         1334.0 ms/step |     3,071 tok/s |  1.05x | peak  2511 MB | 34.1M param | warmup 14.0s | loss 9.078
+  fxlm_torchnorm     513.8 ms/step |     7,973 tok/s |  2.74x | peak  1215 MB | 34.1M param | warmup 6.9s | loss 9.078
+  fxlm_torchce       547.8 ms/step |     7,477 tok/s |  2.57x | peak  1427 MB | 34.1M param | warmup 7.2s | loss 9.077
+  fxlm_tied          583.2 ms/step |     7,023 tok/s |  2.41x | peak  1159 MB | 29.9M param | warmup 6.9s | loss 9.093
 
 BENCH10 DONE

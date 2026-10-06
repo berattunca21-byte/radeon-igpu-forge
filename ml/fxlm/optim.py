@@ -1,14 +1,14 @@
-"""fxlm.optim: FlatAdamW — fp32 master + fp16 param + dinamik loss scale.
+"""fxlm.optim: FlatAdamW — fp32 master + fp16 param + dynamic loss scale.
 
-Kurulumda parametreler tek flat fp32 master'a kopyalanir, m/v fp32 ve
-flat fp16 param buffer'i ayrilir; her model parametresi flat16'nin bir
-goruntusune isaret eder (p.data = flat16[off:off+n].view_as(p)) — ileri
-hesap saf fp16, adim basina cast yok.
+At construction the parameters are copied into a single flat fp32 master, fp32
+m/v and a flat fp16 param buffer are allocated; every model parameter points to
+a view of flat16 (p.data = flat16[off:off+n].view_as(p)) — the forward
+computation is pure fp16, with no per-step cast.
 
 step(): adamw_sumsq (multi-tensor sumsq + nonfinite) -> adamw_final
 (found_inf, norm, clip_coef, step++) -> adamw_update (flat AdamW, grad
-pointer'lari by-value TensorList ile) -> torch._amp_update_scale_.
-Hic host sync / H2D kopya yok.
+pointers passed by value via a TensorList) -> torch._amp_update_scale_.
+No host sync / H2D copy at all.
 """
 import ctypes
 import os
@@ -48,7 +48,7 @@ def _align8(n):
 
 
 class FlatAdamW:
-    """fp32 master + fp16 param + dinamik loss scaling + global clip.
+    """fp32 master + fp16 param + dynamic loss scaling + global clip.
 
     opt = FlatAdamW(model, lr=3e-4, betas=(0.9,0.95), eps=1e-8,
                     weight_decay=0.1, max_grad_norm=1.0,
@@ -64,13 +64,13 @@ class FlatAdamW:
         params = [p for p in model.parameters() if p.requires_grad]
         names = [n for n, p in model.named_parameters() if p.requires_grad]
         if not params:
-            raise ValueError("model'de requires_grad parametre yok")
+            raise ValueError("the model has no requires_grad parameters")
         dev = params[0].device
         if not dev.type == "cuda":
-            raise TypeError("parametreler cuda'da olmali")
+            raise TypeError("parameters must be on cuda")
         if any(p.dtype != torch.float32 for p in params):
-            raise TypeError("FlatAdamW fp32 parametre bekler "
-                            "(kendisi fp16 flat'e donusturur)")
+            raise TypeError("FlatAdamW expects fp32 parameters "
+                            "(it converts them to the fp16 flat itself)")
         self.lr, self.betas, self.eps = lr, betas, eps
         self.weight_decay, self.max_grad_norm = weight_decay, max_grad_norm
         self.growth_interval = int(growth_interval)
@@ -102,10 +102,10 @@ class FlatAdamW:
                                 dtype=torch.float32)
         self._growth = torch.zeros((), device=dev, dtype=torch.int32)
 
-    # -- yardimcilar ---------------------------------------------------------
+    # -- helpers -------------------------------------------------------------
 
     def _chunks(self):
-        """grad'i olan parametrelerden TensorList chunk'lari uret."""
+        """Build TensorList chunks from the parameters that have a grad."""
         items = []
         for name, p, off, n, wd in self._info:
             g = p.grad
@@ -114,9 +114,9 @@ class FlatAdamW:
             if not g.is_contiguous():
                 g = g.contiguous()
             if g.data_ptr() % 16:
-                raise RuntimeError(f"{name}: grad 16B hizali degil")
+                raise RuntimeError(f"{name}: grad is not 16B aligned")
             if g.dtype != torch.float16:
-                raise TypeError(f"{name}: grad fp16 degil ({g.dtype})")
+                raise TypeError(f"{name}: grad is not fp16 ({g.dtype})")
             items.append((g, off, n, wd))
         for i in range(0, len(items), _MAX_T):
             tl = _TensorList()
@@ -188,9 +188,9 @@ class FlatAdamW:
         self.master.copy_(sd["master"]); self.m.copy_(sd["m"])
         self.v.copy_(sd["v"]); self._step_ctr.copy_(sd["step"])
         self.scale.copy_(sd["scale"]); self._growth.copy_(sd["growth"])
-        self.flat16.copy_(self.master)     # fp16 goruntuleri tazele
+        self.flat16.copy_(self.master)     # refresh the fp16 views
 
     def master_state_dict(self):
-        """fp32 master agirliklar, model.state_dict() anahtarlariyla."""
+        """fp32 master weights, keyed like model.state_dict()."""
         return {name: self.master[off:off + n].view(p.shape)
                 for name, p, off, n, _w in self._info}

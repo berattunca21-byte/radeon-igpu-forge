@@ -5,7 +5,7 @@ L1 = FusedGatherLinear (HIP gather+bias+GEMM+Xg writeout, rocBLAS dW)
 L2/L3 = Fn.linear. fp16 + AdamW fused + TunableOp.
 Reports samples/sec and sec/epoch over N=500k rows.
 
-Calistirma (KB kokunden): GPU_PYTHON.cmd ml/bench/bench8_2m.py
+Run (from the repo root): GPU_PYTHON.cmd ml/bench/bench8_2m.py
 """
 import os
 import sys

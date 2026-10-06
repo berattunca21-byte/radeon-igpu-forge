@@ -1,9 +1,9 @@
-"""fxlm.bench_kernels: her fused kernel vs PyTorch esdegeri (gfx1035).
+"""fxlm.bench_kernels: each fused kernel vs its PyTorch equivalent (gfx1035).
 
     venv-rocm10\\Scripts\\python.exe ml\\fxlm\\bench_kernels.py
 
-Sonuclar ml\\fxlm\\bench_kernels_out.txt'ye yazilir.
-TunableOp KAPALI (setup_lm_env). Tum zamanlar senkronlu ortalama ms.
+Results are written to ml\\fxlm\\bench_kernels_out.txt.
+TunableOp OFF (setup_lm_env). All times are synchronized average ms.
 """
 import os
 import sys
@@ -11,7 +11,7 @@ import time
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from fxlm.env import setup_lm_env  # noqa: E402  (torch'tan once)
+from fxlm.env import setup_lm_env  # noqa: E402  (before torch)
 setup_lm_env(tunable=False)
 
 import torch  # noqa: E402
@@ -173,7 +173,7 @@ def bench_optim(dev):
 
     tf = bench(f_step, iters=10, warm=3)
 
-    # torch yolu: fp32 param + scaler unscale + clip + fused AdamW
+    # torch path: fp32 param + scaler unscale + clip + fused AdamW
     m2 = GPT(cfg).to(dev)
     ps2 = list(m2.parameters())
     opt2 = torch.optim.AdamW(ps2, lr=3e-4, betas=(0.9, 0.95), fused=True)
@@ -183,7 +183,7 @@ def bench_optim(dev):
     dummy = torch.ones((), device=dev)
 
     def t_step():
-        scaler.scale(dummy)          # unscale_ oncesi scale() sart
+        scaler.scale(dummy)          # scale() is required before unscale_
         scaler.unscale_(opt2)
         torch.nn.utils.clip_grad_norm_(ps2, 1.0)
         scaler.step(opt2)
@@ -195,7 +195,7 @@ def bench_optim(dev):
 
 
 def main():
-    assert torch.cuda.is_available(), "CUDA yok"
+    assert torch.cuda.is_available(), "no CUDA"
     dev = "cuda"
     torch.manual_seed(0)
     out(f"fxlm bench_kernels — {torch.cuda.get_device_name(0)} "

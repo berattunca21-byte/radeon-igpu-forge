@@ -1,35 +1,35 @@
-# NOT (20 Eyl 2026 temizligi): bu kayittaki ml\hip\ yollari eski yerlesimdir; bench'ler artik ml\bench\ altinda ve fxgpu'yu kullanir. venv-rocm10-stable silindi (wheel arsivi ml\wheels-rocm10-stable\ duruyor).
+# NOTE (20 Sep 2026 cleanup): the ml\hip\ paths in this record are the old layout; the benches now live under ml\bench\ and use fxgpu. venv-rocm10-stable was deleted (the wheel archive ml\wheels-rocm10-stable\ remains).
 
-<PROJE>\ml\hip\bench9_fp32master.py:14: SyntaxWarning: invalid escape sequence '\h'
+<PROJECT>\ml\hip\bench9_fp32master.py:14: SyntaxWarning: invalid escape sequence '\h'
   GPU_PYTHON.cmd ml\hip\bench9_fp32master.py
 torch 2.15.0a0+rocm10.1.0a20260822 | HIP 7.16.26332 | AMD Radeon(TM) Graphics (gfx1035)
 torch 2.15.0a0+rocm10.1.0a20260822 | tunable: True | hipblaslt env: 0
 
-=== MOD: fp16  (param dtype=torch.float16, loss_scale=1.0) ===
-  t0: 1,422,089 ornek/sn (1.38s)
-  t1: 1,427,222 ornek/sn (1.38s)
-  t2: 1,397,681 ornek/sn (1.41s)
-  HIZ medyan: 1,422,089 ornek/sn | peak alloc 319 MB
+=== MODE: fp16  (param dtype=torch.float16, loss_scale=1.0) ===
+  t0: 1,422,089 samples/s (1.38s)
+  t1: 1,427,222 samples/s (1.38s)
+  t2: 1,397,681 samples/s (1.41s)
+  SPEED median: 1,422,089 samples/s | peak alloc 319 MB
   loss @50..300: nan nan nan nan nan nan
-  sonlu=False dusuyor=False |w|max=nan
+  finite=False decreasing=False |w|max=nan
 
-=== MOD: master  (param dtype=torch.float32, loss_scale=1.0) ===
-  t0: 1,403,166 ornek/sn (1.40s)
-  t1: 1,408,487 ornek/sn (1.40s)
-  t2: 1,406,516 ornek/sn (1.40s)
-  HIZ medyan: 1,406,516 ornek/sn | peak alloc 321 MB
+=== MODE: master  (param dtype=torch.float32, loss_scale=1.0) ===
+  t0: 1,403,166 samples/s (1.40s)
+  t1: 1,408,487 samples/s (1.40s)
+  t2: 1,406,516 samples/s (1.40s)
+  SPEED median: 1,406,516 samples/s | peak alloc 321 MB
   loss @50..300: 0.2464 0.0773 0.0261 0.0082 0.0027 0.0012
-  sonlu=True dusuyor=True |w|max=0.371
+  finite=True decreasing=True |w|max=0.371
 
-=== MOD: master_ls  (param dtype=torch.float32, loss_scale=256.0) ===
-  t0: 1,393,445 ornek/sn (1.41s)
-  t1: 1,392,147 ornek/sn (1.41s)
-  t2: 1,407,341 ornek/sn (1.40s)
-  HIZ medyan: 1,393,445 ornek/sn | peak alloc 321 MB
+=== MODE: master_ls  (param dtype=torch.float32, loss_scale=256.0) ===
+  t0: 1,393,445 samples/s (1.41s)
+  t1: 1,392,147 samples/s (1.41s)
+  t2: 1,407,341 samples/s (1.40s)
+  SPEED median: 1,393,445 samples/s | peak alloc 321 MB
   loss @50..300: 0.2460 0.0767 0.0255 0.0079 0.0025 0.0010
-  sonlu=True dusuyor=True |w|max=0.370
+  finite=True decreasing=True |w|max=0.370
 
-=== OZET ===
-  fp16          1,422,089 ornek/sn  (100.0% of fp16)  sonlu=False  son_loss=nan
-  master        1,406,516 ornek/sn  ( 98.9% of fp16)  sonlu=True  son_loss=0.0012
-  master_ls     1,393,445 ornek/sn  ( 98.0% of fp16)  sonlu=True  son_loss=0.0010
+=== SUMMARY ===
+  fp16          1,422,089 samples/s  (100.0% of fp16)  finite=False  last_loss=nan
+  master        1,406,516 samples/s  ( 98.9% of fp16)  finite=True  last_loss=0.0012
+  master_ls     1,393,445 samples/s  ( 98.0% of fp16)  finite=True  last_loss=0.0010

@@ -1,7 +1,7 @@
 """fxlm.norm: fused RMSNorm (fp16 io, fp32 math).
 
-y = x * rsqrt(mean(x^2) + eps) * w — ileri kernel satir-cache'i LDS'te
-tutar; geri dx + dweight (fp32 partial + sum). Hedef: 8192x768 fwd+bwd
+y = x * rsqrt(mean(x^2) + eps) * w — the forward kernel keeps the row cache in
+LDS; backward gives dx + dweight (fp32 partial + sum). Target: 8192x768 fwd+bwd
 ~2 ms (F.rms_norm 4.7 ms).
 """
 import ctypes
@@ -13,9 +13,9 @@ from fxgpu.hip_kernel import compile_module, launch
 
 _SRC_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)),
                          "kernels", "norm.hip")
-_MODS = {}   # arch -> {isim: func}
+_MODS = {}   # arch -> {name: func}
 _NAMES = ["rms_norm_fwd", "rms_norm_bwd_dx", "rms_norm_bwd_dw"]
-_RPB = 64    # norm.hip'teki RPB ile ayni
+_RPB = 64    # same as RPB in norm.hip
 _MAX_LDS = 60 * 1024
 
 
@@ -29,16 +29,16 @@ def _get(arch):
 
 def _check(x, w):
     if x.dtype != torch.float16 or w.dtype != torch.float16:
-        raise TypeError(f"x ve weight fp16 olmali ({x.dtype}, {w.dtype})")
+        raise TypeError(f"x and weight must be fp16 ({x.dtype}, {w.dtype})")
     if not (x.is_cuda and w.is_cuda):
-        raise TypeError("x ve weight cuda'da olmali")
+        raise TypeError("x and weight must be on cuda")
     D = x.shape[-1]
     if w.shape != (D,):
-        raise ValueError(f"weight ({D},) olmali, {tuple(w.shape)}")
+        raise ValueError(f"weight must be ({D},), got {tuple(w.shape)}")
     if D % 8 != 0 or D > 8192:
-        raise ValueError(f"D={D} icin D%8==0 ve D<=8192 sart")
+        raise ValueError(f"D={D} requires D%8==0 and D<=8192")
     if not x.is_contiguous() or not w.is_contiguous():
-        raise ValueError("x ve weight contiguous olmali")
+        raise ValueError("x and weight must be contiguous")
     return D
 
 

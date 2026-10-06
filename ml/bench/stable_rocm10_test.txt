@@ -1,7 +1,7 @@
-# NOT (20 Eyl 2026 temizligi): bu kayittaki ml\hip\ yollari eski yerlesimdir; bench'ler artik ml\bench\ altinda ve fxgpu'yu kullanir. venv-rocm10-stable silindi (wheel arsivi ml\wheels-rocm10-stable\ duruyor).
+# NOTE (20 Sep 2026 cleanup): the ml\hip\ paths in this record are the old layout; the benches now live under ml\bench\ and use fxgpu. venv-rocm10-stable was deleted (the wheel archive ml\wheels-rocm10-stable\ remains).
 
 ##### stable_rocm10_test — Sun Sep 20 20:55:37 TSS 2026 #####
-S = <PROJE>/venv-rocm10-stable/Scripts/python.exe
+S = <PROJECT>/venv-rocm10-stable/Scripts/python.exe
 
 ===== STEP 1: stable torch / GPU =====
 2.13.0+rocm10.0.0 7.15.26333 True
@@ -13,10 +13,10 @@ amdhip64_7.dll
 hiprtc-builtins0715.dll
 hiprtc0715.dll
 --- fxgpu hip_kernel glob check ---
-amdhip: <PROJE>\venv-rocm10-stable\Lib\site-packages\_rocm_sdk_core\bin\amdhip64_7.dll
-hiprtc: <PROJE>\venv-rocm10-stable\Lib\site-packages\_rocm_sdk_core\bin\hiprtc0715.dll
-BIN: <PROJE>\venv-rocm10-stable\Lib\site-packages\_rocm_sdk_core\bin
-INC: <PROJE>\venv-rocm10-stable\Lib\site-packages\_rocm_sdk_core\include
+amdhip: <PROJECT>\venv-rocm10-stable\Lib\site-packages\_rocm_sdk_core\bin\amdhip64_7.dll
+hiprtc: <PROJECT>\venv-rocm10-stable\Lib\site-packages\_rocm_sdk_core\bin\hiprtc0715.dll
+BIN: <PROJECT>\venv-rocm10-stable\Lib\site-packages\_rocm_sdk_core\bin
+INC: <PROJECT>\venv-rocm10-stable\Lib\site-packages\_rocm_sdk_core\include
 EXIT=0
 
 ===== STEP 3: GPU_SMOKE_TEST.py =====
@@ -40,7 +40,7 @@ loss  : 2.12274 -> 2.07811
 time  : 18.00 s / 20 FP32 steps
 alloc : 1.8 MB
 
-BASARILI: gfx1035 FP32 forward/backward/optimizer testi gecti
+SUCCESS: gfx1035 FP32 forward/backward/optimizer test passed
 EXIT=0
 
 ===== STEP 4: fxgpu/hip_kernel.py smoke (fill42) =====
@@ -48,7 +48,7 @@ hiprtc harness OK � fill42 wrote 42s to torch tensor
 EXIT=0
 
 ===== STEP 5: fxgpu selftest.py =====
-<PROJE>\ml\fxgpu\selftest.py:39: UserWarning: Failed validator: ROCBLAS_VERSION (Triggered internally at B:/src/pytorch/aten/src/ATen/hip/tunable/Tunable.cpp:446.)
+<PROJECT>\ml\fxgpu\selftest.py:39: UserWarning: Failed validator: ROCBLAS_VERSION (Triggered internally at B:/src/pytorch/aten/src/ATen/hip/tunable/Tunable.cpp:446.)
   out_ref = Fn.linear(xb, w_ref, b_ref)
 fwd max abs err = 0.000000  (esik 0.05)
 dW err = 0.000000 | db err = 0.000000  (esik 1e-3)
@@ -60,41 +60,41 @@ EXIT=0
 
 ===== STEP 6: bench7 champion (fused, Lt OFF) =====
 Traceback (most recent call last):
-  File "<PROJE>\ml\hip\bench7_fused_e2e.py", line 18, in <module>
+  File "<PROJECT>\ml\hip\bench7_fused_e2e.py", line 18, in <module>
     from hip_kernel import compile_kernel, launch
-  File "<PROJE>\ml\hip\hip_kernel.py", line 19, in <module>
+  File "<PROJECT>\ml\hip\hip_kernel.py", line 19, in <module>
     hiprtc = ctypes.CDLL(os.path.join(_BIN, "hiprtc0716.dll"))
              ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
   File "<PYTHON312>\Lib\ctypes\__init__.py", line 379, in __init__
     self._handle = _dlopen(self._name, mode)
                    ^^^^^^^^^^^^^^^^^^^^^^^^^
-FileNotFoundError: Could not find module '<PROJE>\venv-rocm10-stable\Lib\site-packages\_rocm_sdk_core\bin\hiprtc0716.dll' (or one of its dependencies). Try using the full path with constructor syntax.
+FileNotFoundError: Could not find module '<PROJECT>\venv-rocm10-stable\Lib\site-packages\_rocm_sdk_core\bin\hiprtc0716.dll' (or one of its dependencies). Try using the full path with constructor syntax.
 EXIT=1
 
 ===== STEP 7: bench7 baseline (BNCH_FUSED=0) =====
 Traceback (most recent call last):
-  File "<PROJE>\ml\hip\bench7_fused_e2e.py", line 18, in <module>
+  File "<PROJECT>\ml\hip\bench7_fused_e2e.py", line 18, in <module>
     from hip_kernel import compile_kernel, launch
-  File "<PROJE>\ml\hip\hip_kernel.py", line 19, in <module>
+  File "<PROJECT>\ml\hip\hip_kernel.py", line 19, in <module>
     hiprtc = ctypes.CDLL(os.path.join(_BIN, "hiprtc0716.dll"))
              ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
   File "<PYTHON312>\Lib\ctypes\__init__.py", line 379, in __init__
     self._handle = _dlopen(self._name, mode)
                    ^^^^^^^^^^^^^^^^^^^^^^^^^
-FileNotFoundError: Could not find module '<PROJE>\venv-rocm10-stable\Lib\site-packages\_rocm_sdk_core\bin\hiprtc0716.dll' (or one of its dependencies). Try using the full path with constructor syntax.
+FileNotFoundError: Could not find module '<PROJECT>\venv-rocm10-stable\Lib\site-packages\_rocm_sdk_core\bin\hiprtc0716.dll' (or one of its dependencies). Try using the full path with constructor syntax.
 EXIT=1
 
 ===== STEP 8: hipBLASLt probe (Lt ON — beklenen: gfx1035'te patlar) =====
 Traceback (most recent call last):
-  File "<PROJE>\ml\hip\bench7_fused_e2e.py", line 18, in <module>
+  File "<PROJECT>\ml\hip\bench7_fused_e2e.py", line 18, in <module>
     from hip_kernel import compile_kernel, launch
-  File "<PROJE>\ml\hip\hip_kernel.py", line 19, in <module>
+  File "<PROJECT>\ml\hip\hip_kernel.py", line 19, in <module>
     hiprtc = ctypes.CDLL(os.path.join(_BIN, "hiprtc0716.dll"))
              ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
   File "<PYTHON312>\Lib\ctypes\__init__.py", line 379, in __init__
     self._handle = _dlopen(self._name, mode)
                    ^^^^^^^^^^^^^^^^^^^^^^^^^
-FileNotFoundError: Could not find module '<PROJE>\venv-rocm10-stable\Lib\site-packages\_rocm_sdk_core\bin\hiprtc0716.dll' (or one of its dependencies). Try using the full path with constructor syntax.
+FileNotFoundError: Could not find module '<PROJECT>\venv-rocm10-stable\Lib\site-packages\_rocm_sdk_core\bin\hiprtc0716.dll' (or one of its dependencies). Try using the full path with constructor syntax.
 EXIT=1
 
 ===== STEP 9: A/B — bench7 champion on venv-rocm10 =====
@@ -127,15 +127,15 @@ sympy                    1.14.0
 torch                    2.13.0+rocm10.0.0
 typing_extensions        4.16.0
 --- wheels-rocm10-stable ---
-1.1G	<PROJE>/ml/wheels-rocm10-stable
+1.1G	<PROJECT>/ml/wheels-rocm10-stable
 17
 EXIT=0
 ##### DONE Sun Sep 20 20:57:45 TSS 2026 #####
 
 ##### RETRY steps 6-8 — Sun Sep 20 20:58:55 TSS 2026 #####
-not: bench7+SRC kopyasi <PROJE>/ml/bench/_stable_bench7 altinda; hip_kernel -> PYTHONPATH'ten fxgpu surumu
-hip_kernel resolved: <PROJE>\ml\fxgpu\hip_kernel.py
-hiprtc: <PROJE>\venv-rocm10-stable\Lib\site-packages\_rocm_sdk_core\bin\hiprtc0715.dll
+note: bench7+SRC copy <PROJECT>/ml/bench/_stable_bench7 under; hip_kernel -> the fxgpu version from PYTHONPATH
+hip_kernel resolved: <PROJECT>\ml\fxgpu\hip_kernel.py
+hiprtc: <PROJECT>\venv-rocm10-stable\Lib\site-packages\_rocm_sdk_core\bin\hiprtc0715.dll
 
 ===== STEP 6 (retry): bench7 champion (fused, Lt OFF) =====
 fused L1: True | tunable: True
@@ -166,11 +166,11 @@ hipModuleLoad failed: Kernels.so-000-gfx1035-xnack+.hsaco
  error: file not found
 fused L1: True | tunable: True
 Traceback (most recent call last):
-  File "<PROJE>\ml\bench\_stable_bench7\bench7_fused_e2e.py", line 135, in <module>
+  File "<PROJECT>\ml\bench\_stable_bench7\bench7_fused_e2e.py", line 135, in <module>
     main()
-  File "<PROJE>\ml\bench\_stable_bench7\bench7_fused_e2e.py", line 106, in main
+  File "<PROJECT>\ml\bench\_stable_bench7\bench7_fused_e2e.py", line 106, in main
     step(WARM)
-  File "<PROJE>\ml\bench\_stable_bench7\bench7_fused_e2e.py", line 98, in step
+  File "<PROJECT>\ml\bench\_stable_bench7\bench7_fused_e2e.py", line 98, in step
     h = Fn.silu(Fn.linear(h, W2, b2))
                 ^^^^^^^^^^^^^^^^^^^^
 RuntimeError: hipblaslt error: HIPBLAS_STATUS_INVALID_VALUE when calling `hipblaslt_ext::getAllAlgos(handle, hipblaslt_ext::GemmType::HIPBLASLT_GEMM, transa_outer, transb_outer, a_datatype, b_datatype, in_out_datatype, in_out_datatype, computeType, heuristic_result)`

@@ -1,9 +1,9 @@
-"""fxlm.attention: flash-attention (FA2 tarzi) HIP kernel sarilari.
+"""fxlm.attention: flash-attention (FA2 style) HIP kernel wrappers.
 
-q,k,v (B,T,H,Dh) fp16, son eksen stride=1, diger stride'lar serbest
-(fused qkv buffer'in gorunumu kopyasiz calisir). o (B,T,H,Dh) fp16
-contiguous doner; lse (B,H,T) fp32 backward icin saklanir.
-Dh in {64,128}; T >= 1 serbest (kuyruk bloklari maskelenir).
+q,k,v (B,T,H,Dh) fp16, last-axis stride=1, other strides free
+(a view of a fused qkv buffer works without copies). Returns o (B,T,H,Dh) fp16
+contiguous; lse (B,H,T) fp32 is saved for backward.
+Dh in {64,128}; any T >= 1 (tail blocks are masked).
 """
 import ctypes
 import math
@@ -15,7 +15,7 @@ from fxgpu.hip_kernel import compile_module, launch
 
 _SRC_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)),
                          "kernels", "attention.hip")
-_MODS = {}   # (arch, Dh) -> {isim: func}
+_MODS = {}   # (arch, Dh) -> {name: func}
 _NAMES = ["attn_fwd", "attn_bwd_prep", "attn_bwd_dkv", "attn_bwd_dq"]
 
 
@@ -57,25 +57,25 @@ def _br_bc(dh):
 def _check_qkv(q, k, v):
     if q.dim() != 4 or k.shape != q.shape or v.shape != q.shape:
         raise ValueError(
-            f"q,k,v ayni 4B sekilde olmali: {tuple(q.shape)} "
+            f"q,k,v must have the same 4-D shape: {tuple(q.shape)} "
             f"{tuple(k.shape)} {tuple(v.shape)}")
     B, T, H, Dh = q.shape
     if Dh not in (64, 128):
-        raise ValueError(f"head_dim {Dh} desteklenmiyor (64 veya 128 olmali)")
+        raise ValueError(f"head_dim {Dh} is not supported (must be 64 or 128)")
     if T < 1 or B < 1 or H < 1:
-        raise ValueError(f"gecersiz sekil: {tuple(q.shape)}")
+        raise ValueError(f"invalid shape: {tuple(q.shape)}")
     for nm, t in (("q", q), ("k", k), ("v", v)):
         if t.dtype != torch.float16:
-            raise TypeError(f"{nm} fp16 olmali, {t.dtype} verildi")
+            raise TypeError(f"{nm} must be fp16, got {t.dtype}")
         if not t.is_cuda:
-            raise TypeError(f"{nm} cuda tensoru olmali")
+            raise TypeError(f"{nm} must be a cuda tensor")
         if t.stride(-1) != 1:
-            raise ValueError(f"{nm} son ekseni contiguous olmali "
+            raise ValueError(f"the last axis of {nm} must be contiguous "
                              f"(stride(-1)={t.stride(-1)})")
     if q.numel() >= 2**31:
-        raise ValueError("tensor cok buyuk (2^31 eleman siniri)")
+        raise ValueError("tensor too large (2^31 element limit)")
     if B * H > 65535:
-        raise ValueError(f"B*H={B * H} > 65535 (grid.y siniri)")
+        raise ValueError(f"B*H={B * H} > 65535 (grid.y limit)")
     return B, T, H, Dh
 
 
@@ -161,9 +161,9 @@ class _FlashAttnQKV(torch.autograd.Function):
     @staticmethod
     def forward(ctx, qkv, causal, scale):
         if qkv.dim() != 5 or qkv.shape[2] != 3:
-            raise ValueError(f"qkv (B,T,3,H,Dh) olmali, {tuple(qkv.shape)}")
+            raise ValueError(f"qkv must be (B,T,3,H,Dh), got {tuple(qkv.shape)}")
         if not qkv.is_contiguous():
-            raise ValueError("qkv contiguous olmali")
+            raise ValueError("qkv must be contiguous")
         q, k, v = qkv[:, :, 0], qkv[:, :, 1], qkv[:, :, 2]
         o, lse = _fwd(q, k, v, causal, scale)
         ctx.save_for_backward(qkv, o, lse)
@@ -192,7 +192,7 @@ def flash_attention(q, k, v, causal=True, scale=None):
 def flash_attention_qkv(qkv, causal=True, scale=None):
     """qkv (B,T,3,H,Dh) fp16 contiguous -> o (B,T,H,Dh) fp16."""
     if qkv.dim() != 5:
-        raise ValueError(f"qkv (B,T,3,H,Dh) olmali, {tuple(qkv.shape)}")
+        raise ValueError(f"qkv must be (B,T,3,H,Dh), got {tuple(qkv.shape)}")
     Dh = qkv.shape[-1]
     if scale is None:
         scale = 1.0 / math.sqrt(Dh)

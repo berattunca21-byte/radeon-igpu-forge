@@ -1,13 +1,13 @@
-"""fxlm: gfx1035 (Radeon 680M) icin kucuk GPT egitim paketi.
+"""fxlm: small GPT training package for gfx1035 (Radeon 680M).
 
-El-yazisi HIP kernel'lari (hiprtc ile runtime derlenir):
+Hand-written HIP kernels (compiled at runtime with hiprtc):
   - flash attention (fwd+bwd, fp16 io / fp32 softmax)
-  - fused cross-entropy + linear-CE (tam (N,V) logits hic materialize olmaz)
+  - fused cross-entropy + linear-CE (the full (N,V) logits are never materialized)
   - fused RMSNorm
-  - FlatAdamW (fp32 master + fp16 param + dinamik loss scale, fused)
+  - FlatAdamW (fp32 master + fp16 param + dynamic loss scale, fused)
 
-Tembel export'lar: `from fxlm.env import setup_lm_env` torch'u import
-etmeden ortam degiskenlerini kurar.
+Lazy exports: `from fxlm.env import setup_lm_env` sets up the environment
+variables without importing torch.
 """
 
 __all__ = [

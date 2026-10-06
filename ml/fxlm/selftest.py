@@ -1,20 +1,20 @@
-"""fxlm self-test: fused kernel'arin PyTorch referanslariyla parity'si.
+"""fxlm self-test: parity of the fused kernels with PyTorch references.
 
-Kapsam (hepsi fp16 io, fp32 referans + torch-fp16 hata cubugu kurali
-ile: bizim max-abs hata <= 2 * torch-fp16 hata + 1e-3):
-  - rms_norm fwd/bwd (birka D ve satir sayisi; dx + dweight)
-  - fused_cross_entropy (ignore_index satirli)
+Coverage (all fp16 io, fp32 reference + the torch-fp16 error-bar rule:
+our max-abs error <= 2 * torch-fp16 error + 1e-3):
+  - rms_norm fwd/bwd (several D and row counts; dx + dweight)
+  - fused_cross_entropy (with ignore_index rows)
   - linear_cross_entropy (tensor grad_scale, ignore_index, N % chunk != 0,
-    grad-kapali sadece-loss yolu)
+    the no-grad loss-only path)
   - flash attention fwd/bwd: causal + non-causal, Dh 64/128,
-    tek T degerleri (1, 17, 513), strided qkv gorunumleri, qkv varyanti
-  - FlatAdamW: grad-enjeksiyon parity vs torch AdamW+clip (rel < 1e-5,
-    fp16 == master.half()), inf atlama (master/m/v/step ayni, scale
-    yarilanir), temiz adimlarda scale buyumesi
-  - minik GPT: fused vs torch impl ayni fp16 agirliklarla (loss + tum
-    grad'lar kuralda), sonra 20 FlatAdamW adimi loss'u dusurmeli
+    odd T values (1, 17, 513), strided qkv views, the qkv variant
+  - FlatAdamW: grad-injection parity vs torch AdamW+clip (rel < 1e-5,
+    fp16 == master.half()), inf skip (master/m/v/step unchanged, scale
+    halved), scale growth on clean steps
+  - tiny GPT: fused vs torch impl with the same fp16 weights (loss + all
+    grads within the rule), then 20 FlatAdamW steps must lower the loss
 
-Calistirma (KB kokunden):
+Run (from the repo root):
     venv-rocm10\\Scripts\\python.exe ml\\fxlm\\selftest.py
 """
 import math
@@ -24,7 +24,7 @@ import time
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from fxlm.env import setup_lm_env  # noqa: E402  (torch'tan once)
+from fxlm.env import setup_lm_env  # noqa: E402  (before torch)
 setup_lm_env(tunable=False)
 
 import torch  # noqa: E402
@@ -47,7 +47,7 @@ def report(name, ok, extra=""):
 
 
 def rule(our, ref32, torch16):
-    """bizim hata <= 2*torch-fp16 hata + 1e-3"""
+    """our error <= 2*torch-fp16 error + 1e-3"""
     e_our = (our.float() - ref32).abs().max().item()
     e_t16 = (torch16.float() - ref32).abs().max().item()
     return e_our <= 2 * e_t16 + 1e-3, e_our, e_t16
@@ -79,7 +79,7 @@ def test_ce(dev):
         torch.manual_seed(N + V)
         lg = (torch.randn(N, V, device=dev) * 4).half()
         tg = torch.randint(0, V, (N,), device=dev)
-        tg[::7] = -100                        # ignore_index satirlari
+        tg[::7] = -100                        # ignore_index rows
         l32 = F.cross_entropy(lg.float(), tg, ignore_index=-100)
         l16 = F.cross_entropy(lg, tg, ignore_index=-100)
         lq = fused_cross_entropy(lg, tg, -100)
@@ -110,7 +110,7 @@ def test_linear_ce(dev):
         xr, Wr = x.float().requires_grad_(), W.float().requires_grad_()
         xt, Wt = x.clone().requires_grad_(), W.clone().requires_grad_()
         lq = linear_cross_entropy(xq, Wq, tg, grad_scale=grad_scale,
-                                  chunk_rows=128)   # 128 | N degil
+                                  chunk_rows=128)   # 128 does not divide N
         lr = F.cross_entropy(xr @ Wr.t(), tg, ignore_index=-100)
         lt = F.cross_entropy((xt @ Wt.t()).float(), tg, ignore_index=-100)
         ok1, e1, b1 = rule(lq, lr, lt)
@@ -121,7 +121,7 @@ def test_linear_ce(dev):
         report(f"linear_ce {N}x{D}x{V} {tag}", ok1 and ok2 and ok3,
                f"loss {e1:.5f}/{b1:.5f} dx {e2:.4f}/{b2:.4f} "
                f"dW {e3:.4f}/{b3:.4f}")
-    # grad-kapali sadece-loss yolu: ayni loss, grad_fn yok
+    # no-grad loss-only path: same loss, no grad_fn
     torch.manual_seed(7)
     x = torch.randn(200, 128, device=dev).half()
     W = (torch.randn(512, 128, device=dev) * 0.02).half()
@@ -186,7 +186,7 @@ def test_attention(dev):
                    ok1 and okq and okk and okv,
                    f"fwd {e1:.4f}/{b1:.4f} dq {eq:.4f}/{bq:.4f} "
                    f"dk {ek:.4f}/{bk:.4f} dv {ev:.4f}/{bv:.4f}")
-    # qkv varyanti: tek dqkv buffer
+    # qkv variant: a single dqkv buffer
     for causal in (True, False):
         torch.manual_seed(5)
         B, T, H, Dh = 2, 100, 4, 64
@@ -260,7 +260,7 @@ def test_flat_adamw(dev):
     report("flat_adamw parity", maxrel < 1e-5 and p16ok,
            f"master rel-err {maxrel:.2e} fp16==half {p16ok}")
 
-    # inf -> adim atlanir, scale yarilanir, step sayaci artmaz
+    # inf -> step is skipped, scale is halved, the step counter does not advance
     sc0, st0 = float(opt.scale), int(opt._step_ctr)
     m0, mm0, vv0 = opt.master.clone(), opt.m.clone(), opt.v.clone()
     for p in ps:
@@ -277,7 +277,7 @@ def test_flat_adamw(dev):
            f"step {st0}->{int(opt._step_ctr)}")
     opt.zero_grad()
 
-    # growth_interval temiz adimdan sonra scale 2x
+    # scale doubles after growth_interval clean steps
     sc0 = float(opt.scale)
     for _ in range(opt.growth_interval):
         for p in ps:
@@ -288,11 +288,11 @@ def test_flat_adamw(dev):
            f"scale {sc0}->{float(opt.scale)} "
            f"(interval {opt.growth_interval})")
 
-    # grad accumulation: iki backward birikir
+    # grad accumulation: two backwards accumulate
     ps[0].grad = None
     g1 = torch.randn(ps[0].shape, device=dev).half()
     ps[0].grad = g1.clone()
-    ps[0].grad.add_(g1)          # ikinci micro-step gibi
+    ps[0].grad.add_(g1)          # like a second micro-step
     ok = torch.equal(ps[0].grad, (g1.float() * 2).half())
     report("flat_adamw grad accum", ok)
     opt.zero_grad()
@@ -310,7 +310,7 @@ def test_gpt(dev):
     m_t = GPT(cfg_t).to(dev)
     m_t.load_state_dict(m_f.state_dict())
     m_r = GPT(cfg_t).to(dev)
-    m_r.load_state_dict(m_f.state_dict())   # fp32 referans
+    m_r.load_state_dict(m_f.state_dict())   # fp32 reference
     m_f.half(); m_t.half()
 
     B, T = 8, 64
@@ -332,7 +332,7 @@ def test_gpt(dev):
     report("gpt fused-vs-torch parity", ok1 and worst[0],
            f"loss {e1:.4f}/{b1:.4f} worst-grad {worst[2]} {worst[1]:.4f}")
 
-    # 20 FlatAdamW adimi: loss belirgin dusmeli, skip olmamali
+    # 20 FlatAdamW steps: loss must drop noticeably, no skips
     torch.manual_seed(0)
     m = GPT(cfg_f).to(dev)
     opt = FlatAdamW(m, lr=3e-3, betas=(0.9, 0.95), weight_decay=0.1,
@@ -354,7 +354,7 @@ def test_gpt(dev):
 
 def main():
     t0 = time.perf_counter()
-    assert torch.cuda.is_available(), "CUDA yok"
+    assert torch.cuda.is_available(), "no CUDA"
     dev = "cuda"
     print(f"fxlm selftest — {torch.cuda.get_device_name(0)}", flush=True)
     test_rms_norm(dev)
@@ -365,7 +365,7 @@ def main():
     test_gpt(dev)
     dt = time.perf_counter() - t0
     if FAILS:
-        print(f"SELFTEST FAIL ({len(FAILS)} test): {FAILS} [{dt:.1f}s]")
+        print(f"SELFTEST FAIL ({len(FAILS)} tests): {FAILS} [{dt:.1f}s]")
         sys.exit(1)
     print(f"SELFTEST OK [{dt:.1f}s]")
 

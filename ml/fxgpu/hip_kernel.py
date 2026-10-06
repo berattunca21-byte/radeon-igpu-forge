@@ -1,9 +1,9 @@
 """hip_kernel: minimal hiprtc+ctypes harness for raw HIP kernels on gfx1035.
 
-fxgpu kopyasi — hip\\hip_kernel.py ile ayni API (compile_kernel/launch).
-Fark: DLL'ler sabit isim yerine glob ile bulunur (amdhip64*.dll /
-hiprtc*.dll) ve _rocm_sdk_core dizini/DLL'ler yoksa IndexError yerine
-acik mesajli RuntimeError firlatilir.
+fxgpu copy — same API as hip\\hip_kernel.py (compile_kernel/launch).
+Difference: the DLLs are found via glob instead of fixed names (amdhip64*.dll /
+hiprtc*.dll), and if the _rocm_sdk_core directory/DLLs are missing a
+RuntimeError with a clear message is raised instead of an IndexError.
 """
 import ctypes
 import glob
@@ -14,13 +14,13 @@ import torch
 
 
 def _sdk_subdir(kind):
-    """site-packages altinda _rocm_sdk_core*/<kind> dizinini bul."""
+    """Find the _rocm_sdk_core*/<kind> directory under site-packages."""
     sp = os.path.abspath(os.path.join(os.path.dirname(torch.__file__), ".."))
     hits = sorted(glob.glob(os.path.join(sp, "_rocm_sdk_core*", kind)))
     if not hits:
         raise RuntimeError(
-            f"ROCm SDK '{kind}' dizini bulunamadi: {sp} altinda "
-            f"_rocm_sdk_core*/{kind} yok. Dizin icerigi: "
+            f"ROCm SDK '{kind}' directory not found: no "
+            f"_rocm_sdk_core*/{kind} under {sp}. Directory contents: "
             f"{sorted(os.listdir(sp))}")
     return os.path.abspath(hits[0])
 
@@ -34,7 +34,7 @@ def _load_first(pattern):
                   if "builtins" not in os.path.basename(h))
     if not hits:
         raise RuntimeError(
-            f"{pattern} bulunamadi: {_BIN} icerik={sorted(os.listdir(_BIN))}")
+            f"{pattern} not found: {_BIN} contents={sorted(os.listdir(_BIN))}")
     return ctypes.CDLL(hits[0])
 
 
@@ -87,11 +87,11 @@ def compile_kernel(src: str, name: str, arch: str = "gfx1035",
 
 def compile_module(src: str, names, arch: str = "gfx1035",
                    extra_opts=None):
-    """Tek hiprtc derlemesinde birden cok kernel: {isim: func} sozlugu.
+    """Several kernels from a single hiprtc compile: a {name: func} dict.
 
-    Bir .hip modulunun tum __global__ fonksiyonlarini tek seferde derleyip
-    dondurur (fxlm gibi cok-kernelli paketler icin). Geriye donuk:
-    compile_kernel davranisina dokunmaz.
+    Compiles all __global__ functions of one .hip module at once and returns
+    them (for multi-kernel packages such as fxlm). Backward compatible:
+    does not touch compile_kernel behavior.
     """
     prog = ctypes.c_void_p()
     _chk(hiprtc.hiprtcCreateProgram(

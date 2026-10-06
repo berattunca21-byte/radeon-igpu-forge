@@ -1,0 +1,90 @@
+RADEON FORGE — maximum-speed AI training on the Radeon 680M iGPU — FIRST STEPS (27 Sep 2026, last edit)
+
+THIS FOLDER IS THE SINGLE HUB OF THE PROJECT: the working environment, ready-made code (ml\fxgpu), current benchmarks,
+notes, and an offline install archive. GOAL: push AI training on this hardware (Radeon 680M) to MAXIMUM SPEED.
+Scope: TABULAR / WINDOW MLP (ml\fxgpu) + SMALL LANGUAGE MODEL / TRANSFORMER (ml\fxlm, 24 Sep 2026).
+Game/image CNN notes were removed from here -> local archive (not in the repo)
+
+FOLDER MAP
+----------
+  START_HERE.txt           this file
+  README.md                ALL hardware/software/speed findings + rules (READ FROM START TO END)
+  GPU_PYTHON.cmd           RIGHT PYTHON + REQUIRED ENV VARS in one command:
+                             GPU_PYTHON.cmd script.py [args]
+  VERIFIED_VERSIONS.txt    verified package versions + the package-index change
+  GPU_SMOKE_TEST.py        GPU health test (fp32 CNN fwd/bwd)
+  venv-rocm10\             WORKING ENVIRONMENT (torch 2.15 + ROCm 10.1, gfx1035) — DO NOT TOUCH
+  ml\
+    README.txt             index of the ml folder + install instructions
+    fxgpu\                 >>> TABULAR / WINDOW MLP TRAINING PACKAGE <<<
+                           FusedGatherLinear (HIP fused L1), WindowMLP, setup_env/require_gpu,
+                           train_template.py (NPZ -> training -> AUC -> model.pt), selftest.py,
+                           gather_gemm.hip (kernel source — single copy)
+    fxlm\                  >>> SMALL GPT / TRANSFORMER TRAINING PACKAGE (24 Sep 2026) <<<
+                           flash attention HIP kernels (fwd+bwd, fdot2), fused CE + linear-CE,
+                           FlatAdamW (fp32 master + fp16 param + dynamic scale), GPT model,
+                           train_lm.py / sample.py / prepare_bytes.py, selftest.py,
+                           bench_kernels.py, kernel_regs.py (vgpr/scratch report)
+    bench\                 bench7 (CHAMPION health check), bench8 (2M params), bench9 (fp32 master),
+                           bench10 (GPT: naive PyTorch vs fxlm speed + convergence)
+                           + measurement records (bench9_out.txt, bench10*_out.txt, stable_rocm10_test.txt)
+    docs\SPEED_NOTES.md    all measured speed tables (measurement log)
+    wheels-rocm10\         offline pip archive (venv-rocm10, 1.2 GB)
+    wheels-rocm10-stable\  offline pip archive (ROCm 10.0.0 STABLE backup, 1.1 GB — its venv is not installed)
+  data\                  prepare_bytes.py outputs (byte-level .bin + .json meta)
+  runs\                  training outputs — each run in its own folder (ckpt_last.pt + log)
+
+LANGUAGE MODEL QUICK START (ml\fxlm)
+------------------------------------
+  GPU_PYTHON.cmd ml\fxlm\selftest.py
+  GPU_PYTHON.cmd ml\fxlm\prepare_bytes.py --out data\demo --max-bytes 30000000 venv-rocm10\Lib\site-packages
+  GPU_PYTHON.cmd ml\fxlm\train_lm.py --data data\demo_train.bin --out runs\run_001 --steps 300 --dim 384 --layers 6 --heads 6
+  GPU_PYTHON.cmd ml\fxlm\sample.py --ckpt runs\run_001\ckpt_last.pt --prompt "def " --max-new 300
+
+  NOTE: the fxlm scripts TURN OFF TunableOp (setup_lm_env override) — a long
+  tuning run froze this PC once. To enable it use train_lm.py --tunable
+  (the first run takes minutes and the screen may hang; the CSV goes to fxlm\tunable_cache\).
+
+RULES
+-----
+1) Read README.md from start to end first.
+2) The name torch.cuda is normal on Radeon; this install is ROCm/HIP, not CUDA.
+3) If torch.cuda.is_available() is False, do not silently fall back to CPU — fix the environment (README Sec.9).
+4) The system "python" has no GPU. For training use ONLY:
+     GPU_PYTHON.cmd script.py        (recommended — also sets the env vars)
+   or the full path:
+     <PROJECT>\venv-rocm10\Scripts\python.exe
+   + env: PYTORCH_TUNABLEOP_ENABLED=1  PYTORCH_TUNABLEOP_HIPBLASLT_ENABLED=0
+          PYTORCH_TUNABLEOP_MAX_TUNING_DURATION_MS=200
+   (Backup: <OLD_VENV_THEROCK> — torch 2.12)
+5) FASTEST MEASURED PATH (~1.40M samples/s, 3.1x FP32):
+   pure fp16 + fp32 master weights + TunableOp(rocBLAS) + fused HIP L1. Health check:
+     GPU_PYTHON.cmd ml\bench\bench7_fused_e2e.py    -> ~1.39-1.44M, err=0.0000
+   In your own model: from fxgpu import WindowMLP  (README Sec.7)
+     GPU_PYTHON.cmd ml\fxgpu\train_template.py --npz DATA.npz
+6) Training rules: NO DataLoader (GPU indexing), NO Conv1d (wflat), batch 8192-32768
+   (8192-16384 for small data — README Sec.7), NO loss.item() inside the batch loop, tensors on the GPU from the start,
+   pure fp16 (NOT autocast) + fp32 master weights (pure fp16 AdamW diverges — measured),
+   isfinite check, weight_decay instead of dropout. F (feature count) % 8 == 0.
+7) HARDWARE (27 Sep 2026): DUAL CHANNEL ACTIVE — 2x16 GB DDR5-5600 (running at 4800 MT/s; Hynix
+   Channel A + Micron Channel B, both slots populated, ~27.7 GB visible). The old "single channel ~38 GB/s"
+   bottleneck is gone; earlier speed measurements (including 1.40M samples/s) were taken on single channel,
+   the dual-channel gain is to be confirmed in the first bench7 run. Plugged in + "Ultimate Performance".
+8) PACKAGE INDEX CHANGED: rocm.nightlies.amd.com/whl-multi-arch is NOW LEGACY (frozen at 20260822).
+   New: stable.repo.amd.com/rocm/whl-next (ROCm 10.0.0 STABLE, gfx1035 Windows available)
+   and nightly.repo.amd.com/rocm/whl-next (10.2 nightly). If the environment breaks, offline install:
+   ml\README.txt (wheels-rocm10; --pre is required because networkx is an rc).
+9) Only ONE GPU process at a time (the iGPU is shared; a second process ruins speed and measurements).
+10) Every GPU run writes tunableop_results0.csv to the working directory — harmless, can be deleted.
+11) Do not run long/unbounded GPU experiments: small shape first + timeout + write output to a file (the PC froze once on 24 Sep 2026).
+
+Measurement summary (500k x 40, wflat W=30, bs=32768, re-measured 20 Sep 2026):
+  FP32 ~455k -> pure fp16 ~920k -> +TunableOp ~1.30M -> +fused HIP L1 ~1.40-1.44M samples/s
+  fp32 master weights: -1% speed, no divergence.  2M-param model: ~268k/s (~1.84 s/epoch).
+  Language model (fxlm, 24 Sep 2026): 1.9-2.7x over a naive PyTorch GPT (T256-T1024), 2.07x on a 600-step training run, same quality — README Sec.12.
+  Details: ml\docs\SPEED_NOTES.md
+
+
+REPO NOTE: venv-rocm10\ and ml\wheels-*\ (about 3 GB in total) are not put on GitHub (.gitignore). To set the environment up from scratch
+use the ONLINE install commands in README.md Sec.3 and ml\README.txt (AMD stable/nightly index).
+<PROJECT> in the texts = the path of this folder. Places that describe the offline archive apply to the local copy only.

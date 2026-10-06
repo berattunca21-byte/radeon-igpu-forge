@@ -1,14 +1,14 @@
-"""fxlm.train_lm: gfx1035'te kucuk GPT egitimi (kullanicinin ana girisi).
+"""fxlm.train_lm: small GPT training on gfx1035 (the main entry point).
 
-Calistirma (KB kokunden):
-    venv-rocm10\\Scripts\\python.exe ml\\fxlm\\prepare_bytes.py --out data\\demo <girdiler...>
+Run (from the repo root):
+    venv-rocm10\\Scripts\\python.exe ml\\fxlm\\prepare_bytes.py --out data\\demo <inputs...>
     venv-rocm10\\Scripts\\python.exe ml\\fxlm\\train_lm.py --data data\\demo_train.bin
 
-Kurallar: token dizisi GPU'da; batch = device randint + index aritmetigi
-(DataLoader yok); FlatAdamW fp32 master + fp16 param + dinamik scale;
-log-every'de tek sync; checkpoint atomic (tmp + os.replace).
---tunable: ilk tuning koşusu dakikalar surer, ekran takilabilir —
-CSV ml\\fxlm\\tunable_cache\\ altinda sekil-hash'i ile saklanir.
+Rules: the token sequence lives on the GPU; batch = device randint + index arithmetic
+(no DataLoader); FlatAdamW fp32 master + fp16 param + dynamic scale;
+one sync per log-every; atomic checkpoint (tmp + os.replace).
+--tunable: the first tuning run takes minutes and the screen may hang —
+the CSV is stored under ml\\fxlm\\tunable_cache\\ keyed by a shape hash.
 """
 import argparse
 import hashlib
@@ -24,8 +24,8 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 def _parse():
     ap = argparse.ArgumentParser()
     ap.add_argument("--data", required=True,
-                        help="uint16 token .bin (prepare_bytes.py ciktisi)")
-    ap.add_argument("--val", default=None, help="val .bin (opsiyonel)")
+                        help="uint16 token .bin (output of prepare_bytes.py)")
+    ap.add_argument("--val", default=None, help="val .bin (optional)")
     ap.add_argument("--seq-len", type=int, default=256)
     ap.add_argument("--layers", type=int, default=8)
     ap.add_argument("--heads", type=int, default=8)
@@ -42,8 +42,8 @@ def _parse():
     ap.add_argument("--eval-every", type=int, default=200)
     ap.add_argument("--eval-batches", type=int, default=20)
     ap.add_argument("--log-every", type=int, default=20)
-    ap.add_argument("--out", default=None, help="ckpt dizini (zorunlu)")
-    ap.add_argument("--resume", default=None, help="ckpt dosyasi")
+    ap.add_argument("--out", default=None, help="checkpoint directory (required)")
+    ap.add_argument("--resume", default=None, help="checkpoint file")
     ap.add_argument("--tunable", action="store_true")
     ap.add_argument("--attn", choices=["flash", "sdpa"], default="flash")
     ap.add_argument("--norm", choices=["fused", "torch"], default="torch")
@@ -57,10 +57,10 @@ def main():
     if args.batch * args.seq_len > 16384:
         raise SystemExit(
             f"batch*seq_len = {args.batch * args.seq_len} > 16384 — "
-            "tek micro-step'te bu kadar token gfx1035 icin riskli; "
-            "--batch dusur veya --accum kullan.")
+            "this many tokens in a single micro-step is risky for gfx1035; "
+            "lower --batch or use --accum.")
     if args.out is None:
-        raise SystemExit("--out <ckpt dizini> zorunlu")
+        raise SystemExit("--out <checkpoint directory> is required")
 
     tune_file = None
     if args.tunable:
@@ -71,8 +71,8 @@ def main():
                             "tunable_cache")
         os.makedirs(tdir, exist_ok=True)
         tune_file = os.path.join(tdir, f"tune_{h}.csv")
-        print("UYARI: --tunable acik — ilk tuning kousu birkac dakika "
-              "surebilir ve ekran takilabilir. CSV: " + tune_file,
+        print("WARNING: --tunable is on — the first tuning run can take several "
+              "minutes and the screen may hang. CSV: " + tune_file,
               flush=True)
 
     from fxlm.env import setup_lm_env
@@ -86,12 +86,12 @@ def main():
 
     device = require_gpu()
     print(f"TunableOp enabled: {torch.cuda.tunable.is_enabled()} "
-          f"(varsayilan: kapali — uzun tuning bu PC'yi bir kez dondurdu)",
+          f"(default: off — a long tuning run froze this PC once)",
           flush=True)
     torch.set_float32_matmul_precision("high")
     torch.manual_seed(args.seed)
 
-    # --- meta + veri ---------------------------------------------------------
+    # --- meta + data ---------------------------------------------------------
     prefix = args.data[:-len("_train.bin")] \
         if args.data.endswith("_train.bin") \
         else os.path.splitext(args.data)[0]
@@ -116,7 +116,7 @@ def main():
         if os.path.exists(vp):
             vv = np.fromfile(vp, dtype=np.uint16)
             vt = torch.from_numpy(vv.astype(np.int32)).to(device)
-    print(f"train {ntr:,} token" +
+    print(f"train {ntr:,} tokens" +
           (f" | val {vt.numel():,}" if vt is not None else ""))
 
     cfg = GPTConfig(vocab_size=vocab, seq_len=args.seq_len,
@@ -134,12 +134,12 @@ def main():
     if args.resume:
         sd = torch.load(args.resume, map_location=device,
                         weights_only=False)
-        opt.load_state_dict(sd["opt"])   # master/m/v/scale + flat16 tazele
+        opt.load_state_dict(sd["opt"])   # master/m/v/scale + refresh flat16
         start_step = sd["step"]
         print(f"resume: {args.resume} @ step {start_step}")
     elif os.path.exists(ckpt_path):
-        raise SystemExit(f"{ckpt_path} zaten var — eski kosulari "
-                         "koru: baska --out sec veya --resume kullan.")
+        raise SystemExit(f"{ckpt_path} already exists — protect old runs: "
+                         "choose another --out or use --resume.")
     os.makedirs(args.out, exist_ok=True)
 
     T, B, ACC = args.seq_len, args.batch, args.accum
@@ -183,8 +183,8 @@ def main():
         model.train()
         return float(tot) / args.eval_batches
 
-    # --- egitim dongusu ------------------------------------------------------
-    print(f"adimlar: {args.steps} | micro-batch {B}x{T} x{ACC} accum | "
+    # --- training loop -------------------------------------------------------
+    print(f"steps: {args.steps} | micro-batch {B}x{T} x{ACC} accum | "
           f"lr {args.lr} warmup {args.warmup}", flush=True)
     loss_acc = torch.zeros((), device=device)
     skipped = 0
@@ -226,7 +226,7 @@ def main():
             print(f"  eval @ {gstep}: val_loss {vl:.4f}", flush=True)
             save_ckpt(gstep)
     save_ckpt(gstep)
-    print(f"bitti: ckpt -> {os.path.join(args.out, 'ckpt_last.pt')}",
+    print(f"done: ckpt -> {os.path.join(args.out, 'ckpt_last.pt')}",
           flush=True)
 
 

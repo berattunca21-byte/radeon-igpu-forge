@@ -1,9 +1,9 @@
-"""fxgpu.model: WindowMLP — pencereli giris icin 3 katmanli MLP.
+"""fxgpu.model: WindowMLP — a 3-layer MLP for windowed input.
 
 L1 = FusedGatherLinear (HIP gather_gemm): X16 (R,F) fp16 + idx32 (B,)
-pencere baslangic satirlari -> (B, hidden). Init olcekleri bench7 ile ayni.
-master=True ise parametreler fp32 tutulur, forward'da .half() ile fp16
-hesaplanir (autograd grad'leri fp32 master'a geri tasir).
+window start rows -> (B, hidden). Init scales are the same as bench7.
+If master=True the parameters are kept in fp32 and computed in fp16 via .half()
+in forward (autograd carries the grads back to the fp32 master).
 """
 import torch
 from torch import nn
@@ -47,10 +47,10 @@ class WindowMLP(nn.Module):
         return self._trunk(h1, W2, b2, W3, b3)
 
     def forward_dense(self, xb16):
-        """Onceden gather edilmis (B,K) fp16 batch ile ayni hesap.
+        """Same computation with an already-gathered (B,K) fp16 batch.
 
-        Eval parity / HIP'siz inference icin (FusedGatherLinear yerine
-        duz Fn.linear).
+        For eval parity / inference without HIP (plain Fn.linear instead of
+        FusedGatherLinear).
         """
         W1, b1, W2, b2, W3, b3 = self._half_params()
         h1 = Fn.linear(xb16, W1, b1)

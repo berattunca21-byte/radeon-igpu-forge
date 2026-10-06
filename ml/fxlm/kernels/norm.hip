@@ -1,5 +1,5 @@
-// fxlm norm kernel'lari: fused RMSNorm fwd+bwd (fp16 io, fp32 math).
-// D % 8 == 0 ve D <= 8192 sart (host tarafi dogrular).
+// fxlm norm kernels: fused RMSNorm fwd+bwd (fp16 io, fp32 math).
+// Requires D % 8 == 0 and D <= 8192 (the host side verifies).
 #include <hip/hip_fp16.h>
 
 #define NTH 256
@@ -10,7 +10,7 @@ __device__ __forceinline__ float warp_sum(float v) {
     return v;
 }
 
-// tum thread'ler cagirmali (uniform control flow)
+// all threads must call it (uniform control flow)
 __device__ float block_sum(float v, float* wred /* >= 8 */) {
     v = warp_sum(v);
     int lane = threadIdx.x & 31, wid = threadIdx.x >> 5;
@@ -27,8 +27,8 @@ __device__ float block_sum(float v, float* wred /* >= 8 */) {
     return r;
 }
 
-// bir blok bir satir: y = x * rstd * w ; rstd = rsqrt(mean(x^2)+eps)
-// extern shared: D half (x satir cache'i)
+// one block per row: y = x * rstd * w ; rstd = rsqrt(mean(x^2)+eps)
+// extern shared: D halves (x row cache)
 extern "C" __global__ void __launch_bounds__(NTH)
 rms_norm_fwd(const __half* __restrict__ x, const __half* __restrict__ w,
              __half* __restrict__ y, float* __restrict__ rstd,
@@ -58,8 +58,8 @@ rms_norm_fwd(const __half* __restrict__ x, const __half* __restrict__ w,
         yr[d] = __float2half(__half2float(xs[d]) * r * __half2float(w[d]));
 }
 
-// bir blok bir satir: dx = rstd*w*dy - x * (rstd^3 * t / D), t = sum(x*w*dy)
-// extern shared: 2*D half (x + dy cache)
+// one block per row: dx = rstd*w*dy - x * (rstd^3 * t / D), t = sum(x*w*dy)
+// extern shared: 2*D halves (x + dy cache)
 extern "C" __global__ void __launch_bounds__(NTH)
 rms_norm_bwd_dx(const __half* __restrict__ x, const __half* __restrict__ dy,
                 const __half* __restrict__ w, const float* __restrict__ rstd,
@@ -94,9 +94,9 @@ rms_norm_bwd_dx(const __half* __restrict__ x, const __half* __restrict__ dy,
             - __half2float(xs[d]) * corr);
 }
 
-// dweight kismi toplami: part[strip][d] = sum_{r in strip} x[r][d]*rstd[r]*dy[r][d]
-// grid.x = strip sayisi; her blok RPB satiri isler. Host tarafi fp32 part'i
-// sum(0) ile indirger.
+// dweight partial sum: part[strip][d] = sum_{r in strip} x[r][d]*rstd[r]*dy[r][d]
+// grid.x = number of strips; each block handles RPB rows. The host side reduces
+// the fp32 part with sum(0).
 #define RPB 64
 extern "C" __global__ void __launch_bounds__(NTH)
 rms_norm_bwd_dw(const __half* __restrict__ x, const __half* __restrict__ dy,
@@ -104,7 +104,7 @@ rms_norm_bwd_dw(const __half* __restrict__ x, const __half* __restrict__ dy,
                 int N, int D, int nrows_total) {
     const int r0 = blockIdx.x * RPB;
     const int r1 = min(r0 + RPB, nrows_total);
-    // thread d-subset'i: d = tid + k*NTH (k compile-time unroll — register'da kalir)
+    // thread's d-subset: d = tid + k*NTH (k is a compile-time unroll — stays in registers)
     float acc[32];                          // D <= 8192 -> kmax <= 32
     #pragma unroll
     for (int k = 0; k < 32; k++) acc[k] = 0.f;
