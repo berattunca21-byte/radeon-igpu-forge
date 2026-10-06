@@ -1,0 +1,26 @@
+# Ortam ve buyuk ikili dosyalar (offline arsivler repoya girmez; README'deki pip komutlariyla yeniden indirilir)
+venv-*/
+ml/wheels-*/
+*.whl
+
+# Uretilen veri / egitim ciktilari
+data/*
+runs/*
+!data/.gitkeep
+!runs/.gitkeep
+*.bin
+*.pt
+*.npz
+
+# TunableOp / calisma artiklari
+tunableop_results*.csv
+ml/fxlm/tunable_cache/
+*_run_log.txt
+
+# Python / IDE / OS
+__pycache__/
+*.pyc
+.vscode/
+.idea/
+Thumbs.db
+.claude/

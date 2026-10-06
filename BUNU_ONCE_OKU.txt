@@ -1,0 +1,90 @@
+RADEON FORGE — Radeon 680M iGPU'da maksimum hizli yapay zeka egitimi — ILK ADIMLAR (27 Eyl 2026, son duzenleme)
+
+BU KLASOR PROJENIN TEK MERKEZIDIR: calisan ortam, hazir kod (ml\fxgpu), guncel benchmark'lar,
+notlar ve offline kurulum arsivi. AMAC: yapay zeka egitimini bu donanimda (Radeon 680M) MAKSIMUM HIZA cikarmak.
+Kapsam: TABLO / PENCERE MLP (ml\fxgpu) + KUCUK DIL MODELI / TRANSFORMER (ml\fxlm, 24 Eyl 2026).
+Oyun/goruntu CNN notlari buradan cikarildi -> yerel arsiv (repoda yok)
+
+KLASOR HARITASI
+---------------
+  BUNU_ONCE_OKU.txt        bu dosya
+  README.md                TUM donanim/yazilim/hiz bulgulari + kurallar (BASTAN SONA OKU)
+  GPU_PYTHON.cmd           DOGRU PYTHON + ZORUNLU ENV VAR'LAR tek komutta:
+                             GPU_PYTHON.cmd script.py [args]
+  CALISAN_SURUMLER.txt     dogrulanmis paket surumleri + paket indeksi degisikligi
+  GPU_SMOKE_TEST.py        GPU saglik testi (fp32 CNN fwd/bwd)
+  venv-rocm10\             CALISAN ORTAM (torch 2.15 + ROCm 10.1, gfx1035) — DOKUNMA
+  ml\
+    README.txt             ml klasorunun indeksi + kurulum talimatlari
+    fxgpu\                 >>> TABLO / PENCERE MLP EGITIM PAKETI <<<
+                           FusedGatherLinear (HIP fused L1), WindowMLP, setup_env/require_gpu,
+                           train_template.py (NPZ -> egitim -> AUC -> model.pt), selftest.py,
+                           gather_gemm.hip (kernel kaynagi — tek kopya)
+    fxlm\                  >>> KUCUK GPT / TRANSFORMER EGITIM PAKETI (24 Eyl 2026) <<<
+                           flash attention HIP kernel (fwd+bwd, fdot2), fused CE + linear-CE,
+                           FlatAdamW (fp32 master + fp16 param + dinamik scale), GPT model,
+                           train_lm.py / sample.py / prepare_bytes.py, selftest.py,
+                           bench_kernels.py, kernel_regs.py (vgpr/scratch raporu)
+    bench\                 bench7 (SAMPIYON saglik kontrolu), bench8 (2M param), bench9 (fp32 master),
+                           bench10 (GPT: naif PyTorch vs fxlm hiz + yakinsama)
+                           + olcum kayitlari (bench9_out.txt, bench10*_out.txt, stable_rocm10_test.txt)
+    docs\HIZ_NOTLARI.md    tum olculmus hiz tablolari (olcum kaydi)
+    wheels-rocm10\         offline pip arsivi (venv-rocm10, 1.2 GB)
+    wheels-rocm10-stable\  offline pip arsivi (ROCm 10.0.0 KARARLI yedek, 1.1 GB — venv'i kurulu degil)
+  data\                  prepare_bytes.py ciktilari (byte-level .bin + .json meta)
+  runs\                  egitim ciktilari — her kosu kendi klasorunde (ckpt_last.pt + log)
+
+DIL MODELI HIZLI BASLANGIC (ml\fxlm)
+------------------------------------
+  GPU_PYTHON.cmd ml\fxlm\selftest.py
+  GPU_PYTHON.cmd ml\fxlm\prepare_bytes.py --out data\demo --max-bytes 30000000 venv-rocm10\Lib\site-packages
+  GPU_PYTHON.cmd ml\fxlm\train_lm.py --data data\demo_train.bin --out runs\run_001 --steps 300 --dim 384 --layers 6 --heads 6
+  GPU_PYTHON.cmd ml\fxlm\sample.py --ckpt runs\run_001\ckpt_last.pt --prompt "def " --max-new 300
+
+  NOT: fxlm scriptleri TunableOp'u KAPATIR (setup_lm_env override) — uzun bir
+  tuning kosusu bu PC'yi bir kez dondurdu. Acmak icin train_lm.py --tunable
+  (ilk kosu dakikalar surer, ekran takilabilir; CSV fxlm\tunable_cache\'de).
+
+KURALLAR
+--------
+1) Once README.md'yi bastan sona oku.
+2) torch.cuda adi Radeon'da normaldir; bu kurulum CUDA degil ROCm/HIP'tir.
+3) torch.cuda.is_available() False ise CPU'ya sessizce gecme — ortami duzelt (README Sec.9).
+4) Sistem "python" GPU'suzdur. Egitimde SADECE:
+     GPU_PYTHON.cmd script.py        (onerilen — env var'lari da ayarlar)
+   veya tam yol:
+     <PROJE>\venv-rocm10\Scripts\python.exe
+   + env: PYTORCH_TUNABLEOP_ENABLED=1  PYTORCH_TUNABLEOP_HIPBLASLT_ENABLED=0
+          PYTORCH_TUNABLEOP_MAX_TUNING_DURATION_MS=200
+   (Yedek: <ESKI_VENV_THEROCK> — torch 2.12)
+5) EN HIZLI OLCULMUS YOL (~1.40M ornek/sn, FP32'nin 3.1x'i):
+   saf fp16 + fp32 master agirlik + TunableOp(rocBLAS) + fused HIP L1. Saglik kontrolu:
+     GPU_PYTHON.cmd ml\bench\bench7_fused_e2e.py    -> ~1.39-1.44M, err=0.0000
+   Kendi modelinde: from fxgpu import WindowMLP  (README Sec.7)
+     GPU_PYTHON.cmd ml\fxgpu\train_template.py --npz VERI.npz
+6) Egitim kurallari: DataLoader YOK (GPU indexleme), Conv1d YOK (wflat), batch 8192-32768
+   (kucuk veride 8192-16384 — README Sec.7), loss.item() batch'te YOK, tensorler bastan GPU'da,
+   saf fp16 (autocast DEGIL) + fp32 master agirlik (saf fp16 AdamW iraksiyor — olculdu),
+   isfinite kontrolu, dropout yerine weight_decay. F (ozellik sayisi) % 8 == 0.
+7) DONANIM (27 Eyl 2026): CIFT KANAL AKTIF — 2x16 GB DDR5-5600 (4800 MT/s'de; Hynix
+   Channel A + Micron Channel B, iki slot dolu, ~27.7 GB gorunur). Eski "tek kanal ~38 GB/s"
+   darbogazi giderildi; eski hiz olcumleri (1.40M ornek/sn dahil) tek kanalda alinmisti,
+   cift kanal kazanci ilk bench7 kosusunda dogrulanir. Prize takili + "Nihai Performans".
+8) PAKET INDEKSI DEGISTI: rocm.nightlies.amd.com/whl-multi-arch ARTIK LEGACY (20260822'de
+   dondu). Yeni: stable.repo.amd.com/rocm/whl-next (ROCm 10.0.0 KARARLI, gfx1035 Windows var)
+   ve nightly.repo.amd.com/rocm/whl-next (10.2 nightly). Ortam bozulursa internetsiz kurulum:
+   ml\README.txt (wheels-rocm10; networkx rc oldugu icin --pre sart).
+9) Ayni anda TEK GPU sureci (iGPU paylasimli; ikinci surec hizi ve olcumu bozar).
+10) Her GPU kosusu calisma dizinine tunableop_results0.csv yazar — zararsiz, silinebilir.
+11) Uzun/sinirsiz GPU denemesi yapma: once kucuk sekil + zaman asimi + ciktiyi dosyaya yaz (24 Eyl 2026'da PC bir kez dondu).
+
+Olcum ozeti (500k x 40, wflat W=30, bs=32768, 20 Eyl 2026 yeniden olculdu):
+  FP32 ~455k -> saf fp16 ~920k -> +TunableOp ~1.30M -> +fused HIP L1 ~1.40-1.44M ornek/sn
+  fp32 master agirlik: -%1 hiz, iraksama yok.  2M-param model: ~268k/sn (~1.84 s/epok).
+  Dil modeli (fxlm, 24 Eyl 2026): naif PyTorch GPT'ye gore 1.9-2.7x (T256-T1024), 600 adim egitim 2.07x, ayni kalite — README Sec.12.
+  Ayrinti: ml\docs\HIZ_NOTLARI.md
+
+
+REPO NOTU: venv-rocm10\ ve ml\wheels-*\ (toplam ~3 GB) GitHub'a konmaz (.gitignore). Ortami sifirdan kurmak icin
+README.md Sec.3 ve ml\README.txt'deki ONLINE kurulum komutlarini kullan (AMD stable/nightly indeksi).
+Metinlerdeki <PROJE> = bu klasorun yolu. Offline arsiv anlatilan yerler yalnizca yerel kopya icindir.

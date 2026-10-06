@@ -1,0 +1,178 @@
+# NOT (20 Eyl 2026 temizligi): bu kayittaki ml\hip\ yollari eski yerlesimdir; bench'ler artik ml\bench\ altinda ve fxgpu'yu kullanir. venv-rocm10-stable silindi (wheel arsivi ml\wheels-rocm10-stable\ duruyor).
+
+##### stable_rocm10_test â€” Sun Sep 20 20:55:37 TSS 2026 #####
+S = <PROJE>/venv-rocm10-stable/Scripts/python.exe
+
+===== STEP 1: stable torch / GPU =====
+2.13.0+rocm10.0.0 7.15.26333 True
+AMD Radeon(TM) Graphics gfx1035 7.14
+EXIT=0
+
+===== STEP 2: _rocm_sdk_core\bin DLLs (amdhip/hiprtc) =====
+amdhip64_7.dll
+hiprtc-builtins0715.dll
+hiprtc0715.dll
+--- fxgpu hip_kernel glob check ---
+amdhip: <PROJE>\venv-rocm10-stable\Lib\site-packages\_rocm_sdk_core\bin\amdhip64_7.dll
+hiprtc: <PROJE>\venv-rocm10-stable\Lib\site-packages\_rocm_sdk_core\bin\hiprtc0715.dll
+BIN: <PROJE>\venv-rocm10-stable\Lib\site-packages\_rocm_sdk_core\bin
+INC: <PROJE>\venv-rocm10-stable\Lib\site-packages\_rocm_sdk_core\include
+EXIT=0
+
+===== STEP 3: GPU_SMOKE_TEST.py =====
+MIOpen: Warning [OpenRuntimeLibraryForDevice] CK grouped conv library not found for device gfx1035: Belirtilen modül bulunamadý.
+
+warning: xnack 'Off' was requested for a processor that does not support it!
+warning: xnack 'Off' was requested for a processor that does not support it!
+warning: xnack 'Off' was requested for a processor that does not support it!
+warning: xnack 'Off' was requested for a processor that does not support it!
+warning: xnack 'Off' was requested for a processor that does not support it!
+warning: xnack 'Off' was requested for a processor that does not support it!
+=== RADEON 680M / THEROCK GPU SMOKE TEST ===
+python: 3.12.10 (tags/v3.12.10:0cc8128, Apr  8 2025, 12:21:36) [MSC v.1943 64 bit (AMD64)]
+torch : 2.13.0+rocm10.0.0
+HIP   : 7.15.26333
+GPU   : True
+device: AMD Radeon(TM) Graphics
+arch  : gfx1035
+memory: 7.14 GB reported/shared
+loss  : 2.12274 -> 2.07811
+time  : 18.00 s / 20 FP32 steps
+alloc : 1.8 MB
+
+BASARILI: gfx1035 FP32 forward/backward/optimizer testi gecti
+EXIT=0
+
+===== STEP 4: fxgpu/hip_kernel.py smoke (fill42) =====
+hiprtc harness OK — fill42 wrote 42s to torch tensor
+EXIT=0
+
+===== STEP 5: fxgpu selftest.py =====
+<PROJE>\ml\fxgpu\selftest.py:39: UserWarning: Failed validator: ROCBLAS_VERSION (Triggered internally at B:/src/pytorch/aten/src/ATen/hip/tunable/Tunable.cpp:446.)
+  out_ref = Fn.linear(xb, w_ref, b_ref)
+fwd max abs err = 0.000000  (esik 0.05)
+dW err = 0.000000 | db err = 0.000000  (esik 1e-3)
+F=37 reddi OK: F'yi 8'in katina sifir-sutunla doldur (simdiki F=37; kernel 16B-hizali float4 yukleri ister)
+WindowMLP master=True: fused vs dense err = 0.000000
+WindowMLP master=False: fused vs dense err = 0.000000
+SELFTEST OK
+EXIT=0
+
+===== STEP 6: bench7 champion (fused, Lt OFF) =====
+Traceback (most recent call last):
+  File "<PROJE>\ml\hip\bench7_fused_e2e.py", line 18, in <module>
+    from hip_kernel import compile_kernel, launch
+  File "<PROJE>\ml\hip\hip_kernel.py", line 19, in <module>
+    hiprtc = ctypes.CDLL(os.path.join(_BIN, "hiprtc0716.dll"))
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "<PYTHON312>\Lib\ctypes\__init__.py", line 379, in __init__
+    self._handle = _dlopen(self._name, mode)
+                   ^^^^^^^^^^^^^^^^^^^^^^^^^
+FileNotFoundError: Could not find module '<PROJE>\venv-rocm10-stable\Lib\site-packages\_rocm_sdk_core\bin\hiprtc0716.dll' (or one of its dependencies). Try using the full path with constructor syntax.
+EXIT=1
+
+===== STEP 7: bench7 baseline (BNCH_FUSED=0) =====
+Traceback (most recent call last):
+  File "<PROJE>\ml\hip\bench7_fused_e2e.py", line 18, in <module>
+    from hip_kernel import compile_kernel, launch
+  File "<PROJE>\ml\hip\hip_kernel.py", line 19, in <module>
+    hiprtc = ctypes.CDLL(os.path.join(_BIN, "hiprtc0716.dll"))
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "<PYTHON312>\Lib\ctypes\__init__.py", line 379, in __init__
+    self._handle = _dlopen(self._name, mode)
+                   ^^^^^^^^^^^^^^^^^^^^^^^^^
+FileNotFoundError: Could not find module '<PROJE>\venv-rocm10-stable\Lib\site-packages\_rocm_sdk_core\bin\hiprtc0716.dll' (or one of its dependencies). Try using the full path with constructor syntax.
+EXIT=1
+
+===== STEP 8: hipBLASLt probe (Lt ON â€” beklenen: gfx1035'te patlar) =====
+Traceback (most recent call last):
+  File "<PROJE>\ml\hip\bench7_fused_e2e.py", line 18, in <module>
+    from hip_kernel import compile_kernel, launch
+  File "<PROJE>\ml\hip\hip_kernel.py", line 19, in <module>
+    hiprtc = ctypes.CDLL(os.path.join(_BIN, "hiprtc0716.dll"))
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "<PYTHON312>\Lib\ctypes\__init__.py", line 379, in __init__
+    self._handle = _dlopen(self._name, mode)
+                   ^^^^^^^^^^^^^^^^^^^^^^^^^
+FileNotFoundError: Could not find module '<PROJE>\venv-rocm10-stable\Lib\site-packages\_rocm_sdk_core\bin\hiprtc0716.dll' (or one of its dependencies). Try using the full path with constructor syntax.
+EXIT=1
+
+===== STEP 9: A/B â€” bench7 champion on venv-rocm10 =====
+fused L1: True | tunable: True
+t0: 1,416,817 samples/sec (1.39s)
+t1: 1,412,404 samples/sec (1.39s)
+t2: 1,399,254 samples/sec (1.41s)
+fwd out err=0.0000 | dW err=0.0000 | db err=0.0000
+EXIT=0
+
+===== STEP 10: pip list + wheels size =====
+Package                  Version
+------------------------ -----------------
+amd-torch-device-gfx1035 2.13.0+rocm10.0.0
+filelock                 4.0.1
+fsspec                   2026.9.0
+Jinja2                   3.1.6
+MarkupSafe               3.0.3
+mpmath                   1.3.0
+networkx                 3.6.1
+numpy                    2.5.3
+pip                      26.2.1
+rocm                     10.0.0
+rocm-bootstrap           0.2.0
+rocm-sdk-core            10.0.0
+rocm-sdk-device-gfx1035  10.0.0
+rocm-sdk-libraries       10.0.0
+setuptools               84.0.0
+sympy                    1.14.0
+torch                    2.13.0+rocm10.0.0
+typing_extensions        4.16.0
+--- wheels-rocm10-stable ---
+1.1G	<PROJE>/ml/wheels-rocm10-stable
+17
+EXIT=0
+##### DONE Sun Sep 20 20:57:45 TSS 2026 #####
+
+##### RETRY steps 6-8 â€” Sun Sep 20 20:58:55 TSS 2026 #####
+not: bench7+SRC kopyasi <PROJE>/ml/bench/_stable_bench7 altinda; hip_kernel -> PYTHONPATH'ten fxgpu surumu
+hip_kernel resolved: <PROJE>\ml\fxgpu\hip_kernel.py
+hiprtc: <PROJE>\venv-rocm10-stable\Lib\site-packages\_rocm_sdk_core\bin\hiprtc0715.dll
+
+===== STEP 6 (retry): bench7 champion (fused, Lt OFF) =====
+fused L1: True | tunable: True
+t0: 1,371,427 samples/sec (1.43s)
+t1: 1,371,625 samples/sec (1.43s)
+t2: 1,370,411 samples/sec (1.43s)
+fwd out err=0.0000 | dW err=0.0000 | db err=0.0000
+EXIT=0
+
+===== STEP 7 (retry): bench7 baseline (BNCH_FUSED=0) =====
+fused L1: False | tunable: True
+t0: 1,305,473 samples/sec (1.51s)
+t1: 1,309,739 samples/sec (1.50s)
+t2: 1,311,824 samples/sec (1.50s)
+fwd out err=0.0000 | dW err=0.0000 | db err=0.0000
+EXIT=0
+
+===== STEP 8 (retry): hipBLASLt probe (Lt ON) =====
+
+rocblaslt error: Cannot read "TensileLibrary_lazy_gfx1035.dat" (or .zlib variant): No such file or directory
+
+rocblaslt error: Could not load "TensileLibrary_lazy_gfx1035.dat"
+hipModuleLoad failed: Kernels.so-000-gfx1035.hsaco
+ error: file not found
+hipModuleLoad failed: Kernels.so-000-gfx1035-xnack-.hsaco
+ error: file not found
+hipModuleLoad failed: Kernels.so-000-gfx1035-xnack+.hsaco
+ error: file not found
+fused L1: True | tunable: True
+Traceback (most recent call last):
+  File "<PROJE>\ml\bench\_stable_bench7\bench7_fused_e2e.py", line 135, in <module>
+    main()
+  File "<PROJE>\ml\bench\_stable_bench7\bench7_fused_e2e.py", line 106, in main
+    step(WARM)
+  File "<PROJE>\ml\bench\_stable_bench7\bench7_fused_e2e.py", line 98, in step
+    h = Fn.silu(Fn.linear(h, W2, b2))
+                ^^^^^^^^^^^^^^^^^^^^
+RuntimeError: hipblaslt error: HIPBLAS_STATUS_INVALID_VALUE when calling `hipblaslt_ext::getAllAlgos(handle, hipblaslt_ext::GemmType::HIPBLASLT_GEMM, transa_outer, transb_outer, a_datatype, b_datatype, in_out_datatype, in_out_datatype, computeType, heuristic_result)`
+EXIT=1
+##### RETRY DONE Sun Sep 20 21:03:33 TSS 2026 #####

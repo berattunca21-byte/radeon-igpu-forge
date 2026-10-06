@@ -1,0 +1,17 @@
+fxlm bench_kernels — AMD Radeon(TM) Graphics (TunableOp OFF) 2026-09-24 20:11
+=== flash attention vs SDPA(math) — fwd | fwd+bwd ms ===
+attn B16 T256 H8 Dh64: flash    2.06 |    7.54 ms  sdpa   16.77 |   34.10 ms  speedup fwd 8.13x fb 4.52x
+attn B8 T512 H8 Dh64: flash    3.11 |   11.23 ms  sdpa   29.76 |   57.58 ms  speedup fwd 9.56x fb 5.13x
+attn B4 T1024 H8 Dh64: flash    5.45 |   18.95 ms  sdpa   57.49 |  107.06 ms  speedup fwd 10.55x fb 5.65x
+attn B16 T256 H8 Dh128: flash    6.11 |   20.87 ms  sdpa   23.36 |   50.71 ms  speedup fwd 3.82x fb 2.43x
+=== rms_norm fwd+bwd vs F.rms_norm — ms ===
+rms 8192x768: fused   3.50 ms | torch   3.36 ms  speedup 0.96x
+rms 8192x512: fused   2.81 ms | torch   2.37 ms  speedup 0.84x
+=== cross_entropy fwd+bwd — ms ===
+ce 4096x8192: fused  10.03 ms | torch-fp32  39.65 ms  speedup 3.95x
+ce 4096x16384: fused  19.68 ms | torch-fp32  86.65 ms  speedup 4.40x
+=== linear_cross_entropy (fused head+CE) vs linear+CE — ms ===
+linearCE 4096x512x8192: fused  58.44 ms | torch  82.57 ms  speedup 1.41x
+=== FlatAdamW.step vs GradScaler+clip+AdamW(fused) — ms ===
+adamw 29.5M param: FlatAdamW  35.42 ms | torch path  47.16 ms  speedup 1.33x
+BENCH KERNELS DONE
