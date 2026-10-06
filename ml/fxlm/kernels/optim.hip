@@ -1,11 +1,11 @@
-// fxlm FlatAdamW kernel'lari: apex multi_tensor_apply tarzi by-value
-// tensor listesi + flat master/m/v/p16 buffer'lar. Hicbir host sync yok.
+// fxlm FlatAdamW kernels: an apex multi_tensor_apply style by-value
+// tensor list + flat master/m/v/p16 buffers. No host sync at all.
 //
-// adamw_sumsq  : fp16 grad'lar uzerinde sumsq + nonfinite tespiti
+// adamw_sumsq  : sumsq + nonfinite detection over the fp16 grads
 //                (atomicAdd -> sumsq, atomicOr -> flags)
-// adamw_final  : tek blok; found_inf/norm/clip/stepleri finalize eder,
-//                sumsq ve flags'i sonraki step icin sifirlar
-// adamw_update : found_inf ise no-op; degilse flat AdamW + p16 yazimi
+// adamw_final  : single block; finalizes found_inf/norm/clip/step,
+//                resets sumsq and flags for the next step
+// adamw_update : no-op if found_inf; otherwise flat AdamW + p16 write
 #include <hip/hip_fp16.h>
 
 #define NTH 256
@@ -13,10 +13,10 @@
 #define ELEMS_PER_BLOCK 2048          // 256 thread x 8 half
 
 struct TensorList {
-    const __half* g[MAX_TENSORS];   // fp16 grad pointer'lari
-    long long off[MAX_TENSORS];          // flat buffer offset'i (eleman)
+    const __half* g[MAX_TENSORS];   // fp16 grad pointers
+    long long off[MAX_TENSORS];          // flat buffer offset (elements)
     int n[MAX_TENSORS];             // numel
-    int wd[MAX_TENSORS];            // weight decay uygula mi (ndim>=2)
+    int wd[MAX_TENSORS];            // apply weight decay? (ndim>=2)
     int count;
 };
 
@@ -50,7 +50,7 @@ adamw_sumsq(TensorList L, float* __restrict__ sumsq,
             bad |= !isfinite(f);
         }
     }
-    // blok reduce
+    // block reduce
     for (int off = 16; off; off >>= 1) {
         ss += __shfl_xor_sync(0xffffffffffffffffULL, ss, off, 32);
         bad |= __shfl_xor_sync(0xffffffffffffffffULL, bad, off, 32);
@@ -119,7 +119,7 @@ adamw_update(TensorList L, float* __restrict__ master,
     const int i0 = start + threadIdx.x * 8;
     const int iend = min(n, start + ELEMS_PER_BLOCK);
     if (i0 + 8 <= n) {
-        // 8'li vektorize yol
+        // 8-wide vectorized path
         float4 gv4 = *(const float4*)(g + i0);
         const __half2* gh = (const __half2*)&gv4;
         float gv[8];

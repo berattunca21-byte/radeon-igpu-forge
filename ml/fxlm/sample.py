@@ -1,4 +1,4 @@
-"""fxlm.sample: ckpt'ten metin uretimi.
+"""fxlm.sample: generate text from a checkpoint.
 
     python ml\\fxlm\\sample.py --ckpt OUT\\ckpt_last.pt --prompt "..." \
         --max-new 200 --temperature 0.8 --top-k 50
@@ -10,7 +10,7 @@ import sys
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from fxlm.env import setup_lm_env  # noqa: E402 — torch'tan once
+from fxlm.env import setup_lm_env  # noqa: E402 — before torch
 setup_lm_env(tunable=False)
 
 import torch  # noqa: E402
@@ -35,7 +35,7 @@ def main():
     tok = meta.get("tokenizer", "bytes")
 
     model = GPT(cfg).to(device)
-    # fp32 master'dan yukle, sonra half()
+    # load from the fp32 master, then half()
     with torch.no_grad():
         msd = {k: v.to(device) for k, v in sd["model"].items()}
         missing = []
@@ -45,19 +45,19 @@ def main():
             else:
                 missing.append(name)
         if missing:
-            print("eksik parametreler:", missing)
+            print("missing parameters:", missing)
     model.half().eval()
 
     if tok == "bytes":
         raw = list(args.prompt.encode("utf-8"))
         if not raw:
-            raw = [10]            # bos prompt: "\n" ile seed'le
+            raw = [10]            # empty prompt: seed with "\n"
         ids = torch.tensor(raw, dtype=torch.long, device=device)
         decode = lambda t: bytes(t.tolist()).decode("utf-8",
                                                    errors="replace")
     else:
-        raise SystemExit(f"tokenizer '{tok}' icin encode/decode "
-                         "tanimli degil (sadece 'bytes')")
+        raise SystemExit(f"no encode/decode defined for tokenizer '{tok}' "
+                         "(only 'bytes')")
 
     x = ids.view(1, -1)
     for _ in range(args.max_new):

@@ -1,20 +1,20 @@
-"""bench10_lm: GPT egitim hizi — naif PyTorch baseline vs fxlm (fused HIP kernel'lar).
+"""bench10_lm: GPT training speed — naive PyTorch baseline vs fxlm (fused HIP kernels).
 
-Her varyant AYRI alt surecte kosar (tek GPU sureci kurali), TunableOp varsayilan KAPALI.
-Hiz: 8 isinma adimi (hiprtc derleme dahil) + 20 olculen adim, synchronize ile.
+Each variant runs in a SEPARATE subprocess (the single-GPU-process rule), TunableOp is OFF by default.
+Speed: 8 warm-up steps (including hiprtc compile) + 20 measured steps, with synchronize.
 
-Calistirma (KB kokunden, GPU_PYTHON.cmd DEGIL — o TunableOp'u acar):
-  venv-rocm10\\Scripts\\python.exe ml\\bench\\bench10_lm.py              hiz (3 config x varyantlar)
-  venv-rocm10\\Scripts\\python.exe ml\\bench\\bench10_lm.py --converge   ogrenme kalitesi (byte-level metin)
-  venv-rocm10\\Scripts\\python.exe ml\\bench\\bench10_lm.py --tunable    + fxlm TunableOp (ilk kosu dakikalar surer)
+Run (from the repo root, NOT with GPU_PYTHON.cmd — that turns TunableOp on):
+  venv-rocm10\\Scripts\\python.exe ml\\bench\\bench10_lm.py              speed (3 configs x variants)
+  venv-rocm10\\Scripts\\python.exe ml\\bench\\bench10_lm.py --converge   learning quality (byte-level text)
+  venv-rocm10\\Scripts\\python.exe ml\\bench\\bench10_lm.py --tunable    + fxlm TunableOp (first run takes minutes)
 
-Varyantlar:
+Variants:
   baseline        autocast fp16 + SDPA(MATH) + LayerNorm + nn.Linear + F.cross_entropy(fp32)
-                  + GradScaler + AdamW(fused) + clip — tipik PyTorch GPT
+                  + GradScaler + AdamW(fused) + clip — a typical PyTorch GPT
   fxlm            flash attention HIP + fused RMSNorm + fused linear-CE + FlatAdamW (fp32 master,
-                  saf fp16 agirlik) — baseline ile ayni boyut (tie_embeddings=False)
-  fxlm_sdpa / fxlm_torchnorm / fxlm_torchce   fxlm, tek bilesen PyTorch'a geri alinmis (ablation)
-  fxlm_tied       fxlm varsayilani (gomme agirligi paylasimli, ~4M daha az parametre)
+                  pure fp16 weights) — same size as baseline (tie_embeddings=False)
+  fxlm_sdpa / fxlm_torchnorm / fxlm_torchce   fxlm with a single component reverted to PyTorch (ablation)
+  fxlm_tied       the fxlm default (shared embedding weight, ~4M fewer parameters)
 """
 import json
 import math
@@ -280,15 +280,15 @@ def main():
 
     if "--converge" in argv:
         c = CONV
-        print(f"YAKINSAMA: byte-level metin ({c['corpus_mb']} MB site-packages *.py), V={c['V']} D={c['D']} "
-              f"L={c['L']} H={c['H']} T={c['T']} B={c['B']}, {c['steps']} adim, lr {c['lr']} warmup+cosine",
+        print(f"CONVERGENCE: byte-level text ({c['corpus_mb']} MB site-packages *.py), V={c['V']} D={c['D']} "
+              f"L={c['L']} H={c['H']} T={c['T']} B={c['B']}, {c['steps']} steps, lr {c['lr']} warmup+cosine",
               flush=True)
         for v in ("baseline", "fxlm"):
             res, err = run_child(["--child-converge", v], timeout=1200)
             if res:
                 print(f"{v:10s} params {res['params_m']:.2f}M | val loss {res['evals']} | "
-                      f"train(son50) {res['train_loss_last50']:.4f} | sonlu={res['finite']} | "
-                      f"egitim {res['train_s']:.1f}s", flush=True)
+                      f"train(last50) {res['train_loss_last50']:.4f} | finite={res['finite']} | "
+                      f"training {res['train_s']:.1f}s", flush=True)
             else:
                 print(f"{v:10s} {err}", flush=True)
         return
@@ -302,7 +302,7 @@ def main():
     for cname in configs:
         c = CONFIGS[cname]
         print(f"\n=== {cname}: V={c['V']} D={c['D']} L={c['L']} H={c['H']} T={c['T']} B={c['B']} "
-              f"({c['B'] * c['T']} tok/adim) ===", flush=True)
+              f"({c['B'] * c['T']} tok/step) ===", flush=True)
         runs = [(v, False) for v in variants]
         if "--tunable" in argv:
             runs += [("fxlm_tunable", True), ("fxlm_tunable", True)]
@@ -314,9 +314,9 @@ def main():
             base = results.get((cname, "baseline"))
             sp = f"{base['ms'] / res['ms']:.2f}x" if base else "-"
             results.setdefault((cname, v), res)
-            print(f"  {v:15s} {res['ms']:8.1f} ms/adim | {res['tok_s']:9,.0f} tok/s | {sp:>6s} | "
+            print(f"  {v:15s} {res['ms']:8.1f} ms/step | {res['tok_s']:9,.0f} tok/s | {sp:>6s} | "
                   f"peak {res['peak_mb']:5.0f} MB | {res['params_m']:.1f}M param | "
-                  f"isinma {res['warm_s']:.1f}s | loss {res['loss']:.3f}", flush=True)
+                  f"warmup {res['warm_s']:.1f}s | loss {res['loss']:.3f}", flush=True)
     print("\nBENCH10 DONE", flush=True)
 
 

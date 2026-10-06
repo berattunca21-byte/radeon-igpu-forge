@@ -1,17 +1,17 @@
-"""fxlm.kernel_regs: her kernel icin vgpr/sgpr/scratch/LDS raporu.
+"""fxlm.kernel_regs: vgpr/sgpr/scratch/LDS report for each kernel.
 
-Neden var: attention bwd kernel'lari ic dongulerde TAM `#pragma unroll`
-kullaninca LLVM tum LDS yuklerini ayni anda canli tuttu; VGPR 248'e
-(tavana) dayanip thread basina ~1.3KB scratch spill oldu ve geri
-gecis 10-30x yavasladi (B16 T256'da dkv 81 ms, dq 24.6 ms; duzeltme
-sonrasi fwd+bwd 6.7 ms). hipFuncGetAttributes modul-handle'li
-kernel'larda calismaz (hipError 13) — bu yuzden hiprtc code object
-(ELF64) icindeki <kernel>.kd descriptor'u parse edilir:
+Why it exists: when the attention bwd kernels used a FULL `#pragma unroll`
+in the inner loops, LLVM kept all the LDS loads live at the same time; VGPR hit
+the 248 ceiling and ~1.3KB of per-thread scratch spilled, making the backward
+pass 10-30x slower (dkv 81 ms, dq 24.6 ms at B16 T256; fwd+bwd 6.7 ms after
+the fix). hipFuncGetAttributes does not work on kernels with module
+handles (hipError 13) — so the <kernel>.kd descriptor inside the hiprtc code
+object (ELF64) is parsed instead:
 compute_pgm_rsrc1 bit[5:0]*8 = vgpr, bit[9:6]*16 = sgpr;
-offset 4 = private_segment_fixed_size (spill/scratch byte);
-offset 0 = LDS byte. scratch > 0 => spill var, kerneli incele.
+offset 4 = private_segment_fixed_size (spill/scratch bytes);
+offset 0 = LDS bytes. scratch > 0 => there is a spill, inspect the kernel.
 
-Calistirma (KB kokunden):
+Run (from the repo root):
     venv-rocm10\\Scripts\\python.exe ml\\fxlm\\kernel_regs.py
 """
 import ctypes
@@ -28,7 +28,7 @@ _KERNELS_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)),
 
 
 def compile_code(src, arch="gfx1035", extra_opts=None):
-    """hiprtc ile derle, ham code object (ELF64) byte'larini dondur."""
+    """Compile with hiprtc and return the raw code object (ELF64) bytes."""
     prog = ctypes.c_void_p()
     err = hiprtc.hiprtcCreateProgram(ctypes.byref(prog), src.encode(),
                                    b"k.hip", 0, None, None)
@@ -55,7 +55,7 @@ def compile_code(src, arch="gfx1035", extra_opts=None):
 
 
 def kd_info(d):
-    """ELF64 code object'ten {kernel: {vgpr, sgpr, scratch, lds}} cikar."""
+    """Extract {kernel: {vgpr, sgpr, scratch, lds}} from an ELF64 code object."""
     e_shoff = struct.unpack_from("<Q", d, 0x28)[0]
     e_shentsize, e_shnum, e_shstrndx = struct.unpack_from("<HHH", d, 0x3A)
     sh = [struct.unpack_from("<IIQQQQIIQQ", d, e_shoff + i * e_shentsize)
@@ -95,7 +95,7 @@ def kd_info(d):
 
 def main():
     jobs = []
-    # attention.hip: wrapper'in kullandigi define'larla iki varyant
+    # attention.hip: two variants with the defines the wrapper uses
     for dh, brbc in ((64, (64, 64)), (128, (32, 32))):
         jobs.append((f"attention.hip HEAD_DIM={dh} BR={brbc[0]} "
                      f"BC={brbc[1]}",
@@ -118,8 +118,8 @@ def main():
             any_spill |= bool(v["scratch"])
             print(f"  {k:20s} vgpr={v['vgpr']:3d} sgpr={v['sgpr']:3d} "
                   f"scratch={v['scratch']:5d}B lds={v['lds']:5d}B{flag}")
-    print("\n" + ("UYARI: spill'li kernel var!" if any_spill
-                  else "spill yok."))
+    print("\n" + ("WARNING: a kernel has spills!" if any_spill
+                  else "no spills."))
 
 
 if __name__ == "__main__":

@@ -1,7 +1,7 @@
-// fxlm CE kernel: satir basina online logsumexp (fp32) + softmax grad yazimi.
-// Bir blok bir satir isler; V*2 <= 60KB ise satir LDS'e cache'lenir.
+// fxlm CE kernel: per-row online logsumexp (fp32) + softmax grad write.
+// One block handles one row; if V*2 <= 60KB the row is cached in LDS.
 // grad = (softmax - onehot) * (*mul)   (mul = scale / n_valid, device scalar)
-// loss += atomicAdd( lse - x_target )   (sadece gecerli satirlar)
+// loss += atomicAdd( lse - x_target )   (valid rows only)
 #include <hip/hip_fp16.h>
 #define F_INF __int_as_float(0x7f800000)
 
@@ -10,12 +10,12 @@
 struct CEArgs {
     const __half* __restrict__ logits;   // (N, V) fp16 contiguous
     const long long* __restrict__ target;     // (N,) int64
-    __half* __restrict__ grad;           // (N, V) fp16 veya nullptr
-    float* __restrict__ loss;            // () fp32 accum (host'ta sifirlanir)
-    const float* __restrict__ mul;       // () fp32: grad carpani (scale/n_valid)
+    __half* __restrict__ grad;           // (N, V) fp16 or nullptr
+    float* __restrict__ loss;            // () fp32 accum (zeroed on the host)
+    const float* __restrict__ mul;       // () fp32: grad multiplier (scale/n_valid)
     int N, V;
     long long ignore_index;
-    int use_lds;                         // satir LDS'e sigarsa 1
+    int use_lds;                         // 1 if the row fits in LDS
 };
 
 __device__ __forceinline__ float warp_max(float v) {
@@ -31,7 +31,7 @@ __device__ __forceinline__ float warp_sum2(float v) {
 
 extern "C" __global__ void __launch_bounds__(NTH)
 ce_fwd_grad(CEArgs a) {
-    extern __shared__ __half rowbuf[];    // use_lds ise V half
+    extern __shared__ __half rowbuf[];    // V halves if use_lds
     __shared__ float wred[8];
     __shared__ float mred[8];
     __shared__ float s_m, s_z;
@@ -49,7 +49,7 @@ ce_fwd_grad(CEArgs a) {
         src = rowbuf;
     }
 
-    // pass 1: online logsumexp — thread-local (m, l), sonra blok merge
+    // pass 1: online logsumexp — thread-local (m, l), then block merge
     float mt = (-F_INF), lt = 0.f;
     for (int d = threadIdx.x; d < V; d += NTH) {
         float f = __half2float(src[d]);
@@ -95,7 +95,7 @@ ce_fwd_grad(CEArgs a) {
     const float invz = 1.f / Z;
     __half* gr = a.grad + (long long)row * a.V;
     if ((V & 1) == 0) {
-        // half2 yazim: p(d), p(d+1)
+        // half2 write: p(d), p(d+1)
         for (int d = threadIdx.x * 2; d < V; d += NTH * 2) {
             float p0 = __expf(__half2float(src[d]) - m) * invz;
             float p1 = __expf(__half2float(src[d + 1]) - m) * invz;

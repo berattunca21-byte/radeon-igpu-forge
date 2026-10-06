@@ -4,9 +4,9 @@ FusedGatherLinear: fwd = gather_gemm HIP kernel (gather+bias+GEMM+Xg writeout),
 bwd = rocBLAS mm for dW (dx not needed — input layer), db = sum.
 Compare vs baseline loop (index_select gather + nn.Linear path).
 
-Calistirma (KB kokunden):
+Run (from the repo root):
   GPU_PYTHON.cmd ml/bench/bench7_fused_e2e.py
-  BNCH_FUSED=0 -> baseline (index_select + Linear) kiyas
+  BNCH_FUSED=0 -> baseline (index_select + Linear) comparison
 """
 import os
 import sys

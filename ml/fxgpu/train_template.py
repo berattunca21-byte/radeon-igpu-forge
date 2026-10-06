@@ -1,31 +1,31 @@
-"""fxgpu train_template: gfx1035 (Radeon 680M) icin tablo/pencere egitim scripti.
+"""fxgpu train_template: tabular/window training script for gfx1035 (Radeon 680M).
 
-Calistirma (KB kokunden):
-    GPU_PYTHON.cmd ml\\fxgpu\\train_template.py --npz VERI.npz
+Run (from the repo root):
+    GPU_PYTHON.cmd ml\\fxgpu\\train_template.py --npz DATA.npz
 
-KB kurallari (hepsi olculmus, bu scriptte uygulanir):
-  - DataLoader YOK: batch = GPU'da randperm + indexleme.
-  - Tum tensorlar bastan GPU'da; CPU<->GPU kopya sadece npz yuklenirken.
-  - X.half() saf fp16 (AMP/autocast degil); loss'a out.float() cast.
-  - L1 = FusedGatherLinear (HIP gather_gemm): pencere gather + GEMM + bias
-    tek kernel; Xg write-out ile backward dW rocBLAS mm'de.
-  - Buyuk batch (varsayilan 32768), loss_sum GPU tensoru olarak birikir;
-    loss.item()/sync sadece epoch sonunda bir kez.
-  - isfinite kontrolu --check-every batch'te bir (sync — nadir tutulur).
-  - Zaman-sirali split: son --test-frac test; normalize SADECE train
-    istatistikleriyle (mu/sd X[:cut]'tan, sizma yok).
-  - Pencere semantigi bench7 ile ayni: ornek r = X[r .. r+W-1] satirlari,
-    etiket y[r+W-1]; train r in [0, cut-W+1), test r in [cut-W+1, n-W+1).
-  - F % 8 != 0 ise X'e sifir sutun eklenir (kernel 16B-hizali float4 ister).
-  - Eval inference_mode + rank-AUC + top-10% guven acc.
-  - AdamW(fused=True) + clip 5.0 + lr warmup + opsiyonel fp32 master
-    agirliklar (varsayilan acik) ve statik loss-scale.
+Project rules (all measured, applied in this script):
+  - NO DataLoader: batch = randperm + indexing on the GPU.
+  - All tensors on the GPU from the start; CPU<->GPU copy only while loading the npz.
+  - X.half() pure fp16 (not AMP/autocast); out.float() cast for the loss.
+  - L1 = FusedGatherLinear (HIP gather_gemm): window gather + GEMM + bias in a
+    single kernel; backward dW via rocBLAS mm using the Xg write-out.
+  - Big batch (default 32768), loss_sum accumulates as a GPU tensor;
+    loss.item()/sync only once at the end of the epoch.
+  - isfinite check once every --check-every batches (a sync — keep it rare).
+  - Time-ordered split: the last --test-frac is test; normalize ONLY with train
+    statistics (mu/sd from X[:cut], no leakage).
+  - Window semantics same as bench7: sample r = rows X[r .. r+W-1],
+    label y[r+W-1]; train r in [0, cut-W+1), test r in [cut-W+1, n-W+1).
+  - If F % 8 != 0 zero columns are appended to X (the kernel needs 16B-aligned float4).
+  - Eval with inference_mode + rank-AUC + top-10% confidence acc.
+  - AdamW(fused=True) + clip 5.0 + lr warmup + optional fp32 master
+    weights (on by default) and a static loss scale.
 
-Olculmus denge (bu makine, ~400k satir train): bs=32768 ~1.3M ornek/sn
-ama epok basina sadece ~13 guncelleme; bs=8192 ~0.85M/sn ama 4x guncelleme
--> 3 epokta AUC 0.96. Veri < ~2M satirsa bs 8192-16384 veya daha cok epok
-sec. --no-master synth veride iraksadi (saf fp16 AdamW kararsiz) — master
-varsayilan, kapatma.
+Measured trade-off (this machine, ~400k train rows): bs=32768 ~1.3M samples/s
+but only ~13 updates per epoch; bs=8192 ~0.85M/s but 4x the updates
+-> AUC 0.96 in 3 epochs. If the data is < ~2M rows choose bs 8192-16384 or more
+epochs. --no-master diverged on synthetic data (pure fp16 AdamW is unstable) — master
+is the default, do not turn it off.
 """
 
 import argparse
@@ -33,10 +33,10 @@ import os
 import sys
 import time
 
-# fxgpu paketi icin ml\ kokunu path'e ekle (duz script olarak calisir)
+# add the ml\ root to the path for the fxgpu package (runs as a plain script)
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from fxgpu.env import setup_env  # noqa: E402 — torch import'undan ONCE
+from fxgpu.env import setup_env  # noqa: E402 — BEFORE the torch import
 setup_env()
 
 import numpy as np  # noqa: E402
@@ -48,7 +48,7 @@ from fxgpu import WindowMLP, require_gpu  # noqa: E402
 
 @torch.inference_mode()
 def evaluate(model, X16, y, W, r_lo, r_hi, device, bs=32768):
-    """rank-AUC + acc + top-10% guven acc (train_gpu_optimized portu)."""
+    """rank-AUC + acc + top-10% confidence acc (port of train_gpu_optimized)."""
     model.eval()
     ps, ys = [], []
     for i in range(r_lo, r_hi, bs):
@@ -78,7 +78,7 @@ def evaluate(model, X16, y, W, r_lo, r_hi, device, bs=32768):
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--npz", required=True,
-                    help="X (n,f), y (n,) 0/1, opsiyonel ts, cols")
+                    help="X (n,f), y (n,) 0/1, optional ts, cols")
     ap.add_argument("--window", type=int, default=30)
     ap.add_argument("--hidden", type=int, default=256)
     ap.add_argument("--hidden2", type=int, default=128)
@@ -87,9 +87,9 @@ def main():
     ap.add_argument("--lr", type=float, default=1e-3)
     ap.add_argument("--weight-decay", type=float, default=1e-4)
     ap.add_argument("--warmup-steps", type=int, default=-1,
-                    help="-1 -> auto: min(200, max(10, toplam_adim//10))")
+                    help="-1 -> auto: min(200, max(10, total_steps//10))")
     ap.add_argument("--no-master", action="store_true",
-                    help="fp32 master agirliklari kapat (saf fp16)")
+                    help="turn off fp32 master weights (pure fp16)")
     ap.add_argument("--loss-scale", type=float, default=1.0)
     ap.add_argument("--dropout", type=float, default=0.0)
     ap.add_argument("--test-frac", type=float, default=0.2)
@@ -102,7 +102,7 @@ def main():
     torch.set_float32_matmul_precision("high")
     torch.manual_seed(args.seed)
 
-    # --- veri: npz -> pad -> train-stats normalize -> GPU fp16 ---
+    # --- data: npz -> pad -> train-stats normalize -> GPU fp16 ---
     d = np.load(args.npz)
     X = np.asarray(d["X"], dtype=np.float32)
     y_np = np.asarray(d["y"], dtype=np.float32)
@@ -114,7 +114,7 @@ def main():
         X = np.concatenate(
             [X, np.zeros((n, n_pad), dtype=np.float32)], axis=1)
         cols += [f"_pad{i}" for i in range(n_pad)]
-        print(f"F={F} -> {F + n_pad} ({n_pad} sifir sutun, 16B hiza)")
+        print(f"F={F} -> {F + n_pad} ({n_pad} zero columns, 16B alignment)")
     Fp = F + n_pad
 
     cut = int(n * (1.0 - args.test_frac))
@@ -124,14 +124,14 @@ def main():
     X16 = ((X - mu) / sd).half().contiguous()
     del X
     y = torch.from_numpy(y_np).to(device)
-    print(f"GPU'da: {n:,} x {Fp} fp16 "
+    print(f"On GPU: {n:,} x {Fp} fp16 "
           f"({X16.numel() * 2 / 2**20:.0f} MB) | cut={cut:,}")
 
     W = args.window
     tr_hi = cut - W + 1                      # train r in [0, tr_hi)
     te_lo, te_hi = tr_hi, n - W + 1          # test  r in [te_lo, te_hi)
     if tr_hi <= 0 or te_hi <= te_lo:
-        raise SystemExit(f"pencere/split gecersiz: n={n} cut={cut} W={W}")
+        raise SystemExit(f"invalid window/split: n={n} cut={cut} W={W}")
     ntr, nte = tr_hi, te_hi - te_lo
 
     master = not args.no_master
@@ -153,15 +153,15 @@ def main():
     else:
         warmup = args.warmup_steps
         wtag = ""
-    print(f"warmup={warmup}{wtag} | {steps_per_epoch} adim/epok, "
-          f"{total_steps} toplam adim")
+    print(f"warmup={warmup}{wtag} | {steps_per_epoch} steps/epoch, "
+          f"{total_steps} total steps")
     metrics = {}
     gstep = 0
     for ep in range(args.epochs):
         model.train()
         perm = torch.randperm(ntr, device=device)
         t0 = time.perf_counter()
-        loss_sum = torch.zeros((), device=device)   # GPU'da birikim
+        loss_sum = torch.zeros((), device=device)   # accumulates on the GPU
         nb = 0
         for i in range(0, ntr, bs):
             r = perm[i:i + bs]
@@ -182,13 +182,13 @@ def main():
                     gparam["lr"] = args.lr * warm
             opt.step()
             gstep += 1
-            loss_sum += loss.detach()                 # float() YOK
+            loss_sum += loss.detach()                 # NO float()
             nb += 1
             if nb % args.check_every == 0 \
                     and not torch.isfinite(loss).item():
                 raise RuntimeError(
-                    f"NaN/Inf loss (ep{ep + 1} batch{nb}) — durduruldu")
-        torch.cuda.synchronize()                      # tek sync: epoch sonu
+                    f"NaN/Inf loss (ep{ep + 1} batch{nb}) — stopped")
+        torch.cuda.synchronize()                      # single sync: end of epoch
         dt = time.perf_counter() - t0
         metrics = evaluate(model, X16, y, W, te_lo, te_hi, device)
         metrics["train_loss"] = float(loss_sum) / nb
@@ -203,7 +203,7 @@ def main():
                 "hidden": args.hidden, "hidden2": args.hidden2,
                 "master": master, "metrics": metrics,
                 "args": vars(args)}, args.out)
-    print(f"kaydedildi: {args.out}")
+    print(f"saved: {args.out}")
 
 
 if __name__ == "__main__":

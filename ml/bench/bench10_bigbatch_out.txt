@@ -1,14 +1,14 @@
 
-=== T256: V=8192 D=512 L=8 H=8 T=256 B=16 (4096 tok/adim) ===
-  baseline           786.6 ms/adim |     5,208 tok/s |      - | peak  1853 MB | 33.7M param | isinma 11.0s | loss 9.143
-  fxlm_torchnorm     420.2 ms/adim |     9,749 tok/s |  1.87x | peak  1209 MB | 33.7M param | isinma 6.2s | loss 9.075
+=== T256: V=8192 D=512 L=8 H=8 T=256 B=16 (4096 tok/step) ===
+  baseline           786.6 ms/step |     5,208 tok/s |      - | peak  1853 MB | 33.7M param | warmup 11.0s | loss 9.143
+  fxlm_torchnorm     420.2 ms/step |     9,749 tok/s |  1.87x | peak  1209 MB | 33.7M param | warmup 6.2s | loss 9.075
 
-=== T256B32: V=8192 D=512 L=8 H=8 T=256 B=32 (8192 tok/adim) ===
-  baseline          1515.7 ms/adim |     5,405 tok/s |      - | peak  3165 MB | 33.7M param | isinma 17.7s | loss 9.122
-  fxlm_torchnorm     796.6 ms/adim |    10,284 tok/s |  1.90x | peak  1774 MB | 33.7M param | isinma 10.0s | loss 9.059
+=== T256B32: V=8192 D=512 L=8 H=8 T=256 B=32 (8192 tok/step) ===
+  baseline          1515.7 ms/step |     5,405 tok/s |      - | peak  3165 MB | 33.7M param | warmup 17.7s | loss 9.122
+  fxlm_torchnorm     796.6 ms/step |    10,284 tok/s |  1.90x | peak  1774 MB | 33.7M param | warmup 10.0s | loss 9.059
 
-=== T512B16: V=8192 D=512 L=8 H=8 T=512 B=16 (8192 tok/adim) ===
-  baseline          1905.7 ms/adim |     4,299 tok/s |      - | peak  3678 MB | 33.8M param | isinma 21.2s | loss 9.114
-  fxlm_torchnorm     859.0 ms/adim |     9,536 tok/s |  2.22x | peak  1779 MB | 33.8M param | isinma 10.3s | loss 9.059
+=== T512B16: V=8192 D=512 L=8 H=8 T=512 B=16 (8192 tok/step) ===
+  baseline          1905.7 ms/step |     4,299 tok/s |      - | peak  3678 MB | 33.8M param | warmup 21.2s | loss 9.114
+  fxlm_torchnorm     859.0 ms/step |     9,536 tok/s |  2.22x | peak  1779 MB | 33.8M param | warmup 10.3s | loss 9.059
 
 BENCH10 DONE

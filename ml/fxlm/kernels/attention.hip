@@ -1,13 +1,13 @@
-// fxlm flash-attention kernel'lari (FA2 tarzi, gfx1035 wave32, fdot2).
+// fxlm flash-attention kernels (FA2 style, gfx1035 wave32, fdot2).
 //
-// Layout: q,k,v (B,T,H,DH) fp16 — d stride=1, diger stride'lar serbest.
+// Layout: q,k,v (B,T,H,DH) fp16 — d stride=1, other strides free.
 // o (B,T,H,DH) fp16 contiguous; lse (B,H,T) fp32.
 //
-// Tile semasi (16x16 = 256 thread): S icin m = TM*ty+i, n = TN*tx+j;
-// O icin m = TM*ty+i, d = TD*tx+j. Softmax satir gruplari 16 ardisik lane
-// (shfl_xor width=16). P/dS LDS'e n-cifti paketli yazilir (fdot2 icin).
+// Tile scheme (16x16 = 256 threads): for S m = TM*ty+i, n = TN*tx+j;
+// for O m = TM*ty+i, d = TD*tx+j. Softmax row groups are 16 consecutive lanes
+// (shfl_xor width=16). P/dS are written to LDS packed in n-pairs (for fdot2).
 //
-// LDS plani:
+// LDS plan:
 //   fwd    : Qs[D2*BR] Ks[D2*BC] Vn[BC/2*DH] Ps[BC/2*BR]
 //   bwd_dkv: Ks[D2*BC] Vs[D2*BC] Qm[BR/2*DH] dOm[BR/2*DH]
 //            bufA[D2*BR] (Qs_d -> Ps^T)  bufB[D2*BR] (dOs_d -> dSs^T)
@@ -38,7 +38,7 @@ struct AttnArgs {
     __half* o_out; __half* dq; __half* dk; __half* dv;
     const float* lse; float* lse_out;
     const float* delta; float* delta_out;
-    // eleman stride'lari (b, t, h sirasiyla; d stride = 1 varsayilir)
+    // element strides (in b, t, h order; d stride = 1 is assumed)
     long long qsb, qst, qsh, ksb, kst, ksh, vsb, vst, vsh;
     long long dqb, dqt, dqh, dkb, dkt, dkh, dvb, dvt, dvh;
     int B, T, H;
@@ -46,14 +46,14 @@ struct AttnArgs {
     int causal;
 };
 
-// --- yardimcilar ------------------------------------------------------------
+// --- helpers ----------------------------------------------------------------
 
-// R satirlik (R x HEAD_DIM) tile'i LDS'e "d-boyunca paketli" yukler:
+// Loads an R-row (R x HEAD_DIM) tile into LDS "packed along d":
 // dst[kp*R + r] = half2(src[r][2kp], src[r][2kp+1])
 __device__ void load_pd(const __half* g, long long rstride, int valid,
                         __half2* dst, int R) {
     const int chunks = R * HEAD_DIM / 8;
-    const int cpr = HEAD_DIM / 8;                 // satir basi 16B chunk
+    const int cpr = HEAD_DIM / 8;                 // 16B chunks per row
     for (int c = threadIdx.x; c < chunks; c += NTH) {
         int r = c / cpr;
         int d0 = (c - r * cpr) * 8;
@@ -67,7 +67,7 @@ __device__ void load_pd(const __half* g, long long rstride, int valid,
     }
 }
 
-// R satirlik tile'i LDS'e "satir-cifti paketli" yukler:
+// Loads an R-row tile into LDS "packed in row pairs":
 // dst[rp*HEAD_DIM + d] = half2(src[2rp][d], src[2rp+1][d])
 __device__ void load_pr(const __half* g, long long rstride, int valid,
                         __half2* dst, int R) {
@@ -84,7 +84,7 @@ __device__ void load_pr(const __half* g, long long rstride, int valid,
     }
 }
 
-// 16-lane'lik satir-grubu icinde max/sum (ty ayni olan 16 thread)
+// max/sum within a 16-lane row group (the 16 threads with the same ty)
 __device__ __forceinline__ float grp_max(float v) {
     #pragma unroll
     for (int off = 8; off; off >>= 1)
@@ -152,7 +152,7 @@ attn_fwd(AttnArgs a) {
                     s[i][j] = __builtin_amdgcn_fdot2(a2[i], b2[j], s[i][j], false);
         }
 
-        // online softmax + P'nin n-cifti paketli yazimi
+        // online softmax + n-pair packed write of P
         #pragma unroll
         for (int i = 0; i < TM; i++) {
             const int ml = TM * ty + i;
@@ -189,7 +189,7 @@ attn_fwd(AttnArgs a) {
         }
         __syncthreads();
 
-        // acc += P V  (np = kv-cifti)
+        // acc += P V  (np = kv pair)
         #pragma unroll
         for (int np = 0; np < BC / 2; np++) {
             __half2 a2[TM], b2[TD];
@@ -206,7 +206,7 @@ attn_fwd(AttnArgs a) {
         __syncthreads();
     }
 
-    // epilogue: O ve LSE
+    // epilogue: O and LSE
     const long long obase = (long long)b * (a.T * a.H * HEAD_DIM) + h * HEAD_DIM;
     #pragma unroll
     for (int i = 0; i < TM; i++) {
@@ -227,8 +227,8 @@ attn_fwd(AttnArgs a) {
 
 extern "C" __global__ void __launch_bounds__(NTH)
 attn_bwd_prep(AttnArgs a) {
-    // grid.x = B*H ; her warp bir satir (t = wid, wid+8, ...)
-    // o ve dout contiguous (B,T,H,DH) varsayilir (wrapper garantiler)
+    // grid.x = B*H ; each warp handles one row (t = wid, wid+8, ...)
+    // o and dout are assumed contiguous (B,T,H,DH) (the wrapper guarantees it)
     const int bh = blockIdx.x;
     const int b = bh / a.H, h = bh - b * a.H;
     const int wid = threadIdx.x >> 5, lane = threadIdx.x & 31;
@@ -250,7 +250,7 @@ attn_bwd_prep(AttnArgs a) {
     }
 }
 
-// --- backward: dK/dV (kv tile basina blok) ----------------------------------
+// --- backward: dK/dV (one block per kv tile) --------------------------------
 
 extern "C" __global__ void __launch_bounds__(NTH)
 attn_bwd_dkv(AttnArgs a) {
@@ -258,8 +258,8 @@ attn_bwd_dkv(AttnArgs a) {
     __shared__ __half2 Vs[D2 * BC];
     __shared__ __half2 Qm[(BR / 2) * HEAD_DIM];
     __shared__ __half2 dOm[(BR / 2) * HEAD_DIM];
-    __shared__ __half2 bufA[D2 * BR];   // once Qs_d, sonra Ps^T
-    __shared__ __half2 bufB[D2 * BR];   // once dOs_d, sonra dSs^T
+    __shared__ __half2 bufA[D2 * BR];   // first Qs_d, then Ps^T
+    __shared__ __half2 bufB[D2 * BR];   // first dOs_d, then dSs^T
 
     const int bh = blockIdx.y;
     const int b = bh / a.H, h = bh - b * a.H;
@@ -296,7 +296,7 @@ attn_bwd_dkv(AttnArgs a) {
         __syncthreads();
 
         // S^T[n][m] = K[n] . Q[m]   (n = TM*ty+i, m = TN*tx+j)
-        // (kismi unroll: tam unroll yukleri erkene cekip VGPR tasmasi yapardi)
+        // (partial unroll: a full unroll would hoist the loads early and overflow VGPRs)
         float st[TM][TN], dpt[TM][TN];
         #pragma unroll
         for (int i = 0; i < TM; i++)
@@ -326,9 +326,9 @@ attn_bwd_dkv(AttnArgs a) {
                     dpt[i][j] = __builtin_amdgcn_fdot2(a2[i], c2[j], dpt[i][j], false);
         }
 
-        // P^T ve dS^T'yi m-cifti paketli yaz (bufA/bufB'yi yeniden kullan —
-        // once tum thread'lerin st/dpt okumasi bitsin diye sync sart)
-        // lse/delta sadece mg'ye (yani tx'e) bagli: i dongusu disinda yukle.
+        // write P^T and dS^T packed in m-pairs (reuse bufA/bufB —
+        // a sync is required so all threads finish reading st/dpt first)
+        // lse/delta depend only on mg (i.e. on tx): load them outside the i loop.
         __syncthreads();
         float lv[TN], dl[TN];
         #pragma unroll
@@ -364,7 +364,7 @@ attn_bwd_dkv(AttnArgs a) {
         }
         __syncthreads();
 
-        // accV[n][d] += P^T[n][m] . dO[m][d]  (mp = m-cifti)
+        // accV[n][d] += P^T[n][m] . dO[m][d]  (mp = m pair)
         // accK[n][d] += dS^T[n][m] . Q[m][d]
         #pragma unroll 4
         for (int mp = 0; mp < BR / 2; mp++) {
@@ -390,7 +390,7 @@ attn_bwd_dkv(AttnArgs a) {
         __syncthreads();
     }
 
-    // dk/dv yaz (strided ciktilar)
+    // write dk/dv (strided outputs)
     #pragma unroll
     for (int i = 0; i < TM; i++) {
         const int ng = bn + TM * ty + i;
@@ -405,7 +405,7 @@ attn_bwd_dkv(AttnArgs a) {
     }
 }
 
-// --- backward: dQ (q tile basina blok) --------------------------------------
+// --- backward: dQ (one block per q tile) ------------------------------------
 
 extern "C" __global__ void __launch_bounds__(NTH)
 attn_bwd_dq(AttnArgs a) {
@@ -428,7 +428,7 @@ attn_bwd_dq(AttnArgs a) {
             a.H * HEAD_DIM, a.T - bm, dOs, BR);
     __syncthreads();
 
-    // bu blok icin lse/delta register'lara
+    // lse/delta for this block into registers
     float lse_r[TM], del_r[TM];
     #pragma unroll
     for (int i = 0; i < TM; i++) {
@@ -482,8 +482,8 @@ attn_bwd_dq(AttnArgs a) {
                     dp[i][j] = __builtin_amdgcn_fdot2(g2[i], c2[j], dp[i][j], false);
                 }
         }
-        // dS = P o (dP - Delta) * scale -> n-cifti paketli yaz
-        // (ds bir kez hesaplanir; jj dongusu sadece paketler)
+        // dS = P o (dP - Delta) * scale -> write packed in n-pairs
+        // (ds is computed once; the jj loop only packs)
         #pragma unroll
         for (int i = 0; i < TM; i++) {
             const int ml = TM * ty + i;
@@ -505,7 +505,7 @@ attn_bwd_dq(AttnArgs a) {
         }
         __syncthreads();
 
-        // acc[m][d] += dS[m][n] . K[n][d]  (np = n-cifti)
+        // acc[m][d] += dS[m][n] . K[n][d]  (np = n pair)
         #pragma unroll 4
         for (int np = 0; np < BC / 2; np++) {
             __half2 a2[TM], b2[TD];

@@ -1,0 +1,117 @@
+Base packages verified on this computer on 22 July 2026
+
+Python 3.12.10 64-bit
+torch==2.12.0+rocm7.14.0a20260519
+amd-torch-device-gfx1035==2.12.0+rocm7.14.0a20260519
+torchvision==0.27.0+rocm7.14.0a20260519
+amd-torchvision-device-gfx1035==0.27.0+rocm7.14.0a20260519
+torchaudio==2.11.0+rocm7.14.0a20260519
+rocm==7.14.0a20260519
+rocm-sdk-core==7.14.0a20260519
+rocm-sdk-device-gfx1035==7.14.0a20260519
+rocm-sdk-libraries==7.14.0a20260519
+numpy==2.4.4
+onnx==1.22.0
+onnxruntime==1.27.0
+pillow==12.2.0
+
+Verified HIP: 7.13.26190
+Verified architecture: gfx1035
+Verified device name: AMD Radeon(TM) Graphics
+
+Working Python:
+<OLD_VENV_THEROCK>\Scripts\python.exe
+
+This list is not a "latest version" recommendation. It is a record of the working environment.
+
+==================================================================
+20 September 2026 — SECOND verified environment for the fx project (primary)
+
+Python 3.12.10 64-bit
+torch==2.15.0a0+rocm10.1.0a20260822
+amd-torch-device-gfx1035==2.15.0a0+rocm10.1.0a20260822
+rocm==10.1.0a20260822
+rocm-sdk-core==10.1.0a20260822
+rocm-sdk-device-gfx1035==10.1.0a20260822
+rocm-sdk-libraries==10.1.0a20260822
+numpy==2.4.4
+pandas==3.0.6
+scikit-learn==1.9.1
+lightgbm==4.7.0
+onnx==1.23.0
+onnxruntime==1.30.0
+
+Verified HIP: 7.16.26332
+Verified architecture: gfx1035
+Verified device name: AMD Radeon(TM) Graphics
+
+Working Python (moved into this project folder on 20 Sep — the old fx\ folder no longer exists):
+<PROJECT>\venv-rocm10\Scripts\python.exe
+
+Original install command (20 Sep 2026 — this index is NOW LEGACY, see below):
+py -3.12 -m venv venv-rocm10
+venv-rocm10\Scripts\python.exe -m pip install --pre --index-url
+  https://rocm.nightlies.amd.com/whl-multi-arch/ "torch[device-gfx1035]" numpy
+
+Driver (20 Sep 2026): AMD 32.0.21045.9003 (27 Aug 2026) — newer than July's 21043.19003.
+Memory visible to the GPU: 7.14 GB. torch multi_processor_count=6 (WGP) = 12 CU.
+
+Note: this build measured ~3-7% slower than venv-therock on the 500k x 40 wflat
+benchmark (fp32 ~424k vs ~455k; fp16 ~874k vs ~900k samples/s). The user
+still chose the newer build as primary. If speed becomes a problem, venv-therock
+is still there as a working backup.
+
+Wheel archive: all wheels of this environment are kept in
+`ml\wheels-rocm10\` (offline install: ml\README.txt; local copy only, not in the repo).
+Wheel versions of small dependencies (filelock, networkx, fsspec, setuptools)
+may be slightly newer than what is installed; the critical pins
+(torch, amd-torch-device-gfx1035, rocm-sdk-*) are identical.
+
+==================================================================
+20 September 2026 — PACKAGE INDEX CHANGE (important)
+
+AMD moved the TheRock indexes under repo.amd.com:
+  Stable : https://stable.repo.amd.com/rocm/whl-next/   (ROCm 10.0.0 STABLE;
+           torch 2.11.0 / 2.12.0 / 2.13.0 +rocm10.0.0, gfx1035 win_amd64 cp310-cp314)
+  Nightly: https://nightly.repo.amd.com/rocm/whl-next/  (ROCm 10.2.0a; torch 2.12/2.13/2.14/2.15a0;
+           latest 20260920)
+  Legacy : https://rocm.nightlies.amd.com/whl-multi-arch/ — last wheel for gfx1035 is
+           2.15.0a0+rocm10.1.0a20260822 (the installed one). No longer updated.
+triton: only linux_x86_64 on both indexes -> no inductor on Windows.
+SUPPORTED_GPUS.md: gfx1035 Windows = Build/Sanity/Release Ready all ✅.
+
+==================================================================
+20 September 2026 — ROCm 10.0.0 STABLE test (venv-rocm10-stable; the venv was DELETED after the test,
+the wheel archive ml\wheels-rocm10-stable\ remains — if a backup environment is needed, install from it)
+
+Python 3.12.10 64-bit
+torch==2.13.0+rocm10.0.0
+amd-torch-device-gfx1035==2.13.0+rocm10.0.0
+rocm==10.0.0
+rocm-bootstrap==0.2.0
+rocm-sdk-core==10.0.0
+rocm-sdk-device-gfx1035==10.0.0
+rocm-sdk-libraries==10.0.0
+numpy==2.5.3
+
+Verified HIP: 7.15.26333
+Verified architecture: gfx1035 (7.14 GB)
+DLL names: amdhip64_7.dll, hiprtc0715.dll (hiprtc0716.dll on the 10.1 nightly — hip_kernel.py finds them via glob)
+
+Python: <PROJECT>\venv-rocm10-stable\Scripts\python.exe
+Wheels: ml\wheels-rocm10-stable\ (17 wheels, 1.1 GB) — offline: pip install --no-index --find-links ...
+
+Install command:
+py -3.12 -m venv venv-rocm10-stable
+venv-rocm10-stable\Scripts\python.exe -m pip install ^
+  --index-url https://stable.repo.amd.com/rocm/whl-next/ --extra-index-url https://pypi.org/simple ^
+  "torch[device-gfx1035]==2.13.0+rocm10.0.0" numpy
+
+INSTALL PITFALL: pip install WinError 206 (path too long) — the wheel's licenses/ tree is ~230 characters,
+LongPathsEnabled=0 and no admin rights. Fix: `subst S: "<PROJECT>"`
+-> S:\venv-rocm10-stable\Scripts\python.exe -m pip install ... -> `subst S: /d`.
+
+Test result (bench7, same session): fused champion 1.34-1.37M (venv-rocm10: 1.42-1.44M, -5%);
+pure-PyTorch baseline (BNCH_FUSED=0) 1.31M — equal in both environments (~1.30M).
+hipBLASLt STILL crashes on gfx1035. GPU_SMOKE_TEST / hiprtc / selftest passed.
+Decision: venv-rocm10 stays primary; stable = a pinned, reproducible backup.

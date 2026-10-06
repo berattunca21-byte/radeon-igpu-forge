@@ -1,18 +1,18 @@
-"""bench9_fp32master: saf fp16 vs fp32-master-weights (fp16 hesap) hiz + kararlilik.
+"""bench9_fp32master: pure fp16 vs fp32-master-weights (fp16 compute) speed + stability.
 
-Ayni model/veri/batch bench7 ile (500k x 40, W=30, HID=256, bs=32768), L1 =
-fxgpu.FusedGatherLinear (HIP gather_gemm). Modlar (BNCH_MODE env, virgul ile):
-  fp16      : bench7 ile ayni — agirliklar fp16, AdamW fp16 uzerinde calisir
-  master    : agirliklar fp32 (AdamW fp32), her adimda .half() ile fp16 hesap
-  master_ls : master + statik loss scale (BNCH_LOSS_SCALE, varsayilan 256)
+Same model/data/batch as bench7 (500k x 40, W=30, HID=256, bs=32768), L1 =
+fxgpu.FusedGatherLinear (HIP gather_gemm). Modes (BNCH_MODE env, comma separated):
+  fp16      : same as bench7 — weights are fp16, AdamW runs on fp16
+  master    : weights are fp32 (AdamW fp32), fp16 compute via .half() each step
+  master_ls : master + static loss scale (BNCH_LOSS_SCALE, default 256)
 
-Iki olcum:
-  HIZ        : WARM isinma + 3 x ITERS adim, ornek/sn (TunableOp isinmada tune eder)
-  KARARLILIK : ogrenilebilir etiketle STAB_STEPS adim; loss izi sonlu mu, dusuyor mu
+Two measurements:
+  SPEED     : WARM warm-up + 3 x ITERS steps, samples/s (TunableOp tunes during warm-up)
+  STABILITY : STAB_STEPS steps with a learnable label; is the loss trace finite, is it decreasing
 
-Calistirma (KB kokunden):
+Run (from the repo root):
   GPU_PYTHON.cmd ml/bench/bench9_fp32master.py
-  (veya env: PYTORCH_TUNABLEOP_ENABLED=1 PYTORCH_TUNABLEOP_HIPBLASLT_ENABLED=0
+  (or env: PYTORCH_TUNABLEOP_ENABLED=1 PYTORCH_TUNABLEOP_HIPBLASLT_ENABLED=0
              PYTORCH_TUNABLEOP_MAX_TUNING_DURATION_MS=200)
 """
 import os
@@ -83,7 +83,7 @@ def run_mode(mode, X16, y, ntr, lo, device):
     dtype = torch.float32 if master else torch.float16
     print(f"\n=== MOD: {mode}  (param dtype={dtype}, loss_scale={loss_scale}) ===")
 
-    # --- HIZ ---
+    # --- SPEED ---
     params = build_params(device, dtype)
     step = make_step(params, X16, y, ntr, lo, master, loss_scale, device)
     torch.cuda.reset_peak_memory_stats()
@@ -98,11 +98,11 @@ def run_mode(mode, X16, y, ntr, lo, device):
         torch.cuda.synchronize()
         dt = time.perf_counter() - t0
         rates.append(ITERS * BS / dt)
-        print(f"  t{trial}: {rates[-1]:,.0f} ornek/sn ({dt:.2f}s)")
+        print(f"  t{trial}: {rates[-1]:,.0f} samples/s ({dt:.2f}s)")
     peak = torch.cuda.max_memory_allocated() / 2**20
-    print(f"  HIZ medyan: {sorted(rates)[1]:,.0f} ornek/sn | peak alloc {peak:.0f} MB")
+    print(f"  SPEED median: {sorted(rates)[1]:,.0f} samples/s | peak alloc {peak:.0f} MB")
 
-    # --- KARARLILIK --- (taze param, ogrenilebilir etiket, ayni lr)
+    # --- STABILITY --- (fresh params, learnable label, same lr)
     params = build_params(device, dtype, seed=1)
     step = make_step(params, X16, y, ntr, lo, master, loss_scale, device)
     trace = torch.zeros(STAB_STEPS // STAB_LOG, device=device)
@@ -115,7 +115,7 @@ def run_mode(mode, X16, y, ntr, lo, device):
     finite = all(np.isfinite(tr))
     wmax = max(p.detach().abs().max().item() for p in params)
     print(f"  loss @{STAB_LOG}..{STAB_STEPS}: " + " ".join(f"{v:.4f}" for v in tr))
-    print(f"  sonlu={finite} dusuyor={finite and tr[-1] < tr[0]} |w|max={wmax:.3f}")
+    print(f"  finite={finite} decreasing={finite and tr[-1] < tr[0]} |w|max={wmax:.3f}")
     return sorted(rates)[1], finite, tr
 
 
@@ -123,11 +123,11 @@ def main():
     require_gpu()
     device = torch.device("cuda")
     print("torch", torch.__version__, "| tunable:", torch.cuda.tunable.is_enabled(),
-          "| hipblaslt env:", os.environ.get("PYTORCH_TUNABLEOP_HIPBLASLT_ENABLED", "(varsayilan)"))
+          "| hipblaslt env:", os.environ.get("PYTORCH_TUNABLEOP_HIPBLASLT_ENABLED", "(default)"))
 
     rng = np.random.default_rng(0)
     X = torch.from_numpy(rng.standard_normal((N, F)).astype(np.float32)).to(device)
-    # ogrenilebilir etiket: pencere sonundaki satirin f0'i + onceki satirin f1'i
+    # learnable label: f0 of the window's last row + f1 of the previous row
     y = ((X[:, 0] + 0.5 * torch.roll(X[:, 1], 1)) > 0).float()
     X16 = X.half()
     lo, ntr = W - 1, N - (W - 1)
@@ -135,12 +135,12 @@ def main():
     modes = os.environ.get("BNCH_MODE", "fp16,master,master_ls").split(",")
     results = {m: run_mode(m.strip(), X16, y, ntr, lo, device) for m in modes}
 
-    print("\n=== OZET ===")
+    print("\n=== SUMMARY ===")
     base = results.get("fp16", (None,))[0]
     for m, (rate, finite, tr) in results.items():
         rel = f"{rate / base * 100:5.1f}%" if base else "  -  "
-        print(f"  {m:10s} {rate:>12,.0f} ornek/sn  ({rel} of fp16)  "
-              f"sonlu={finite}  son_loss={tr[-1]:.4f}")
+        print(f"  {m:10s} {rate:>12,.0f} samples/s  ({rel} of fp16)  "
+              f"finite={finite}  last_loss={tr[-1]:.4f}")
 
 
 if __name__ == "__main__":

@@ -1,12 +1,12 @@
-"""fxlm.prepare_bytes: metin dosyasi/glob -> byte-level token .bin.
+"""fxlm.prepare_bytes: text file/glob -> byte-level token .bin.
 
-vocab=256 (bayt degerleri). Yazar:
+vocab=256 (byte values). Writes:
     <out>_train.bin, <out>_val.bin  (uint16)
     <out>.json  {vocab_size, tokenizer:"bytes", n_train, n_val}
 
-Ornek:
+Example:
     python ml\\fxlm\\prepare_bytes.py --out data\\demo "C:\\...\\Lib\\*.py"
-Bagimliliksiz (numpy+stdlib).
+No dependencies beyond numpy+stdlib.
 """
 import argparse
 import glob
@@ -19,16 +19,16 @@ import numpy as np
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("inputs", nargs="+",
-                    help="metin dosyasi, dizin veya glob (birden cok olur)")
+                    help="text file, directory or glob (several allowed)")
     ap.add_argument("--out", required=True,
-                    help="cikis on-eki: <out>_train.bin + <out>.json")
+                    help="output prefix: <out>_train.bin + <out>.json")
     ap.add_argument("--val-frac", type=float, default=0.01)
     ap.add_argument("--max-bytes", type=int, default=0,
-                    help="0 -> sinirsiz; buyuk kaynaklarda kesme")
+                    help="0 -> unlimited; truncation for large sources")
     ap.add_argument("--ext", default=".txt,.md,.py",
-                    help="dizin taramasinda alinacak uzantilar "
-                         "(virgulle; acikca verilen dosya/glob'lara "
-                         "uygulanmaz)")
+                    help="extensions to take when scanning a directory "
+                         "(comma separated; not applied to explicitly "
+                         "given files/globs)")
     args = ap.parse_args()
 
     exts = tuple(e.strip().lower() for e in args.ext.split(",") if e.strip())
@@ -44,9 +44,9 @@ def main():
             files += hits if hits else [pat]
     files = [f for f in files if os.path.isfile(f)]
     if not files:
-        raise SystemExit("girdi dosyasi bulunamadi: " + " ".join(args.inputs))
+        raise SystemExit("no input file found: " + " ".join(args.inputs))
 
-    # binary eleme: ilk 8 KB'ta NUL varsa metin degildir
+    # binary filter: a NUL in the first 8 KB means it is not text
     kept, skipped = [], 0
     for f in files:
         try:
@@ -61,10 +61,10 @@ def main():
         kept.append(f)
     files = kept
     if skipped:
-        print(f"{skipped} binary dosya atlandi")
+        print(f"{skipped} binary files skipped")
     if not files:
-        raise SystemExit("filtre sonrasi metin dosyasi kalmadi")
-    print(f"{len(files)} dosya okunuyor...")
+        raise SystemExit("no text files left after filtering")
+    print(f"reading {len(files)} files...")
 
     chunks = []
     total = 0
@@ -95,7 +95,7 @@ def main():
             "n_files": len(files)}
     with open(args.out + ".json", "w", encoding="utf-8") as f:
         json.dump(meta, f, indent=2)
-    print(f"yazildi: {tr_p} ({n_tr:,} token) | {va_p} ({n_val:,}) | "
+    print(f"wrote: {tr_p} ({n_tr:,} tokens) | {va_p} ({n_val:,}) | "
           f"{args.out}.json")
 
 

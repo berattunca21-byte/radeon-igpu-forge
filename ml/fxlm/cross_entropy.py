@@ -1,9 +1,9 @@
-"""fxlm.cross_entropy: fused CE + linear-CE (tam (N,V) logits yazilmaz).
+"""fxlm.cross_entropy: fused CE + linear-CE (the full (N,V) logits are not written).
 
-ce_fwd_grad kernel'i satir basina online logsumexp (fp32) hesaplar;
-grad'i (softmax - onehot) * mul olarak fp16 yazar (mul = scale/n_valid,
-device scalar — host sync yok). linear_cross_entropy satir chunk'lari
-uzerinden logits_c = x_c @ W.T uretip dx/dW'yi ayni dongude cikarir.
+The ce_fwd_grad kernel computes an online logsumexp (fp32) per row;
+it writes the grad as (softmax - onehot) * mul in fp16 (mul = scale/n_valid,
+a device scalar — no host sync). linear_cross_entropy produces
+logits_c = x_c @ W.T over row chunks and gets dx/dW in the same loop.
 """
 import ctypes
 import math
@@ -17,7 +17,7 @@ _SRC_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)),
                          "kernels", "ce.hip")
 _MODS = {}
 _NAMES = ["ce_fwd_grad"]
-_LDS_LIMIT = 60 * 1024     # satir cache icin ust sinir (V*2 <= bu)
+_LDS_LIMIT = 60 * 1024     # upper bound for the row cache (V*2 <= this)
 
 
 class _CEArgs(ctypes.Structure):
@@ -39,13 +39,13 @@ def _get(arch):
 
 
 def _inv_nvalid(target, ignore_index):
-    """1/n_valid device tensoru (n_valid==0 -> 0). Host sync yok."""
+    """1/n_valid device tensor (n_valid==0 -> 0). No host sync."""
     nv = (target != ignore_index).sum(dtype=torch.float32)
     return torch.where(nv > 0, nv.reciprocal(), nv)
 
 
 def _ce_rows(logits, target, grad, loss_sum, mul, ignore_index):
-    """tek launch: (C,V) logits uzerinde loss+grad biriktir."""
+    """single launch: accumulate loss+grad over (C,V) logits."""
     N, V = logits.shape
     fns = _get(torch.cuda.get_device_properties(logits.device).gcnArchName)
     a = _CEArgs()
@@ -61,16 +61,16 @@ def _ce_rows(logits, target, grad, loss_sum, mul, ignore_index):
 
 def _check_logits(logits, target):
     if logits.dtype != torch.float16:
-        raise TypeError(f"logits fp16 olmali, {logits.dtype}")
+        raise TypeError(f"logits must be fp16, got {logits.dtype}")
     if not (logits.is_cuda and target.is_cuda):
-        raise TypeError("logits ve target cuda'da olmali")
+        raise TypeError("logits and target must be on cuda")
     if not logits.is_contiguous() or not target.is_contiguous():
-        raise ValueError("logits ve target contiguous olmali")
+        raise ValueError("logits and target must be contiguous")
     if target.dtype != torch.int64:
-        raise TypeError(f"target int64 olmali, {target.dtype}")
+        raise TypeError(f"target must be int64, got {target.dtype}")
     if logits.dim() != 2 or target.dim() != 1 \
             or target.shape[0] != logits.shape[0]:
-        raise ValueError(f"logits (N,V), target (N,) beklenir: "
+        raise ValueError(f"expected logits (N,V), target (N,): "
                          f"{tuple(logits.shape)} vs {tuple(target.shape)}")
 
 
@@ -94,8 +94,8 @@ class _FusedCE(torch.autograd.Function):
 
 
 def fused_cross_entropy(logits, target, ignore_index=-100):
-    """logits (N,V) fp16, target (N,) int64 -> fp32 skaler loss
-    (ignore olmayanlarin ortalamasi)."""
+    """logits (N,V) fp16, target (N,) int64 -> fp32 scalar loss
+    (mean over the non-ignored rows)."""
     return _FusedCE.apply(logits, target, int(ignore_index))
 
 
@@ -105,7 +105,7 @@ def _auto_chunk(D, V):
 
 
 class _LinearCE(torch.autograd.Function):
-    """loss = CE(x @ W.T, target) — (N,V) logits hic materialize olmaz."""
+    """loss = CE(x @ W.T, target) — the (N,V) logits are never materialized."""
 
     @staticmethod
     def forward(ctx, x, weight, target, grad_scale, ignore_index,
@@ -151,24 +151,24 @@ class _LinearCE(torch.autograd.Function):
 
 def _check_lin(x, weight, target):
     if x.dtype != torch.float16 or weight.dtype != torch.float16:
-        raise TypeError("x ve weight fp16 olmali")
+        raise TypeError("x and weight must be fp16")
     if not (x.is_cuda and weight.is_cuda and target.is_cuda):
-        raise TypeError("tum tensorlar cuda'da olmali")
+        raise TypeError("all tensors must be on cuda")
     if not (x.is_contiguous() and weight.is_contiguous()
             and target.is_contiguous()):
-        raise ValueError("x, weight, target contiguous olmali")
+        raise ValueError("x, weight, target must be contiguous")
     if target.dtype != torch.int64:
-        raise TypeError("target int64 olmali")
+        raise TypeError("target must be int64")
     N, D = x.shape
     V, Dw = weight.shape
     if Dw != D or target.shape != (N,):
-        raise ValueError(f"sekiller uyumsuz: x{tuple(x.shape)} "
+        raise ValueError(f"shape mismatch: x{tuple(x.shape)} "
                          f"W{tuple(weight.shape)} t{tuple(target.shape)}")
     return N, D, V
 
 
 def _linear_ce_loss_only(x, weight, target, ignore_index, chunk_rows):
-    """grad kapali yol: dx/dW ve dlogits hic ayrilmaz."""
+    """no-grad path: dx/dW and dlogits are never allocated."""
     N, D, V = _check_lin(x, weight, target)
     dev = x.device
     if chunk_rows is None:
@@ -187,9 +187,9 @@ def linear_cross_entropy(x, weight, target, grad_scale=1.0,
                          ignore_index=-100, chunk_rows=None):
     """x (N,D) fp16, weight (V,D) fp16, target (N,) int64 -> loss fp32.
 
-    grad_scale: python float veya 0-dim fp32 cuda tensor (loss scale).
-    chunk_rows: None -> otomatik (~50 GFLOP ust sinirli).
-    Grad gerekmiyorsa sadece-loss yolu kullanilir (dx/dW ayrilmaz).
+    grad_scale: python float or a 0-dim fp32 cuda tensor (loss scale).
+    chunk_rows: None -> automatic (capped at ~50 GFLOP).
+    If no grad is needed the loss-only path is used (dx/dW not allocated).
     """
     if not (torch.is_grad_enabled()
             and (x.requires_grad or weight.requires_grad)):
